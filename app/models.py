@@ -8,7 +8,6 @@ FONT_TITLE = ("Segoe UI", 16, "bold")
 
 
 class SerialModel:
-    """Wrapper around pyserial that provides a safe fallback when hardware is absent."""
     def __init__(self, port="/dev/ttyUSB0", baudrate=9600, timeout=1):
         self.port = port
         self.baudrate = baudrate
@@ -17,7 +16,6 @@ class SerialModel:
         try:
             self._serial = serial.Serial(port=self.port, baudrate=self.baudrate, timeout=self.timeout)
         except Exception:
-            # Safe fallback: serial not available during development
             self._serial = None
 
     def send(self, data: str):
@@ -25,15 +23,12 @@ class SerialModel:
             try:
                 self._serial.write(data.encode())
             except Exception:
-                # ignore serial errors in UI
                 pass
         else:
-            # for development, just print
             print(f"[SerialModel mock] send: {data}")
 
 
 class AppState:
-    """Holds mutable application state used by controller and views."""
     def __init__(self):
         self.current_phase = {"state": "OFF", "time_left": 0}
         self.cycle_running = {"active": False}

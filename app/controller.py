@@ -5,10 +5,6 @@ from .views import LoginView, MainMenuView, TrafficView
 
 class AppController:
     def __init__(self, config=None):
-        """config: dict with optional keys 'serial' and 'durations'
-        serial: {port, baudrate, timeout}
-        durations: {go, caution, stop} in seconds
-        """
         self.config = config or {}
         serial_cfg = self.config.get('serial', {})
         port = serial_cfg.get('port', '/dev/ttyUSB0')
@@ -17,13 +13,11 @@ class AppController:
         self.serial = SerialModel(port=port, baudrate=baudrate, timeout=timeout)
         self.state = AppState()
         durations = self.config.get('durations', {})
-        # default durations (seconds)
         self.t_go = durations.get('go', 15)
         self.t_caution = durations.get('caution', 5)
         self.t_stop = durations.get('stop', 15)
 
     def start(self):
-        # launch login
         self.show_login()
 
     def show_login(self):
@@ -58,7 +52,6 @@ class AppController:
             pass
         self.show_login()
 
-    # Placeholder openers
     def open_tms(self):
         try:
             self.main_view.root.destroy()
@@ -109,7 +102,6 @@ class AppController:
         tk.Label(win, text="(Placeholder)").pack(pady=20)
         tk.Button(win, text="Close", command=win.destroy).pack(pady=10)
 
-    # Traffic control methods
     def send_command(self, cmd):
         self.serial.send(cmd)
 
@@ -169,7 +161,6 @@ class AppController:
 
     def _timer_tick(self):
         if not self.state.cycle_running["active"]:
-            # countdown only when stopped
             if self.state.current_phase["time_left"] > 0:
                 self.state.current_phase["time_left"] -= 1
                 self.update_traffic_view()
@@ -194,7 +185,6 @@ class AppController:
         st = self.state.current_phase["state"]
         tv.status_label.config(text=f"LIGHT: {st}")
         tv.timer_label.config(text=f"TIMER: {self.state.current_phase['time_left']}")
-        # set lights
         if st == "GO":
             tv.light_canvas.itemconfig(tv.green_circle, fill="#00c853")
             tv.light_canvas.itemconfig(tv.yellow_circle, fill="#4b2f00")
@@ -212,7 +202,6 @@ class AppController:
             tv.light_canvas.itemconfig(tv.yellow_circle, fill="#4b2f00")
             tv.light_canvas.itemconfig(tv.red_circle, fill="#4b0000")
 
-    # Manual controls
     def go_button(self):
         self.stop_traffic_cycle()
         self.state.current_phase["state"] = "GO"

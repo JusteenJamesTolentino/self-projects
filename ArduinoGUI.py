@@ -1,7 +1,5 @@
 from app.controller import AppController
 
-# Central configuration for the application. Change values here to affect
-# serial connection parameters and traffic LED durations.
 CONFIG = {
     "serial": {
         "port": "/dev/ttyUSB0",
@@ -9,7 +7,6 @@ CONFIG = {
         "timeout": 1
     },
     "durations": {
-        # durations in seconds
         "go": 15,
         "caution": 5,
         "stop": 15

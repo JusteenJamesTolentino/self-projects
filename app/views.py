@@ -17,6 +17,21 @@ def draw_rounded_rect(canvas, x1, y1, x2, y2, r=20, **kwargs):
     return canvas.create_polygon([coord for p in points for coord in p], smooth=True, splinesteps=20, **kwargs)
 
 
+def apply_dark_theme(root):
+    style = ttk.Style(root)
+    try:
+        style.theme_use('clam')
+    except Exception:
+        pass
+    style.configure('TLabel', foreground=FG_COLOR, background=BG_COLOR, font=FONT_MAIN)
+    style.configure('TFrame', background=BG_COLOR)
+    style.configure('Card.TFrame', background='#262626')
+    style.configure('TButton', foreground=FG_COLOR, background=BG_COLOR, font=FONT_MAIN, padding=6)
+    style.map('TButton', background=[('active', '#005a9e'), ('disabled', '#444444')])
+    style.configure('TEntry', fieldbackground='#1e1e1e', foreground=FG_COLOR, background='#1e1e1e')
+    root.configure(bg=BG_COLOR)
+
+
 class LoginView:
     def __init__(self, controller, root_cls=tk.Tk):
         self.controller = controller
@@ -24,6 +39,7 @@ class LoginView:
         self.root.title("Login")
         self.root.geometry("620x360")
         self.root.configure(bg=BG_COLOR)
+        apply_dark_theme(self.root)
         self.build()
 
     def build(self):
@@ -32,7 +48,7 @@ class LoginView:
 
         canvas_card = tk.Canvas(container, width=360, height=240, bg=BG_COLOR, highlightthickness=0)
         canvas_card.pack(pady=10)
-        draw_rounded_rect(canvas_card, 6, 6, 354, 234, r=16, fill="#262626", outline="#3a3a3a")
+        draw_rounded_rect(canvas_card, 6, 6, 354, 234, r=16, fill=BG_COLOR, outline="#ffffff")
 
         card = ttk.Frame(container, padding=(24, 18), style="Card.TFrame")
         card.place(in_=canvas_card, x=12, y=12)
@@ -43,21 +59,45 @@ class LoginView:
         form = ttk.Frame(card)
         form.pack(pady=(6, 4))
 
-        self.username_entry = ttk.Entry(form, width=28)
+        self.username_entry = tk.Entry(form, width=28, bg=BG_COLOR, fg=FG_COLOR, insertbackground=FG_COLOR, relief='flat', highlightthickness=1, highlightbackground='#ffffff', highlightcolor='#ffffff')
         self.username_entry.grid(row=0, column=0, columnspan=2, pady=(6, 8))
 
-        self.password_entry = ttk.Entry(form, width=28)
+        self.password_entry = tk.Entry(form, width=28, bg=BG_COLOR, fg=FG_COLOR, insertbackground=FG_COLOR, relief='flat', highlightthickness=1, highlightbackground='#ffffff', highlightcolor='#ffffff')
         self.password_entry.grid(row=1, column=0, columnspan=2, pady=(2, 6))
 
-        # show toggle
         self.show_state = {"visible": False}
 
         def toggle_show():
             self.show_state["visible"] = not self.show_state["visible"]
-            self.password_entry.config(show=("" if self.show_state["visible"] else "*"))
+            if getattr(self.password_entry, '_placeholder', False):
+                self.password_entry.config(show='')
+            else:
+                self.password_entry.config(show=("" if self.show_state["visible"] else "*"))
 
         eye_btn = ttk.Button(form, text="🙈", width=3, command=toggle_show)
         eye_btn.grid(row=1, column=2, padx=(8, 0))
+
+        def _make_placeholder(entry, hint, is_password=False):
+            def on_focus_in(event):
+                if getattr(entry, '_placeholder', False):
+                    entry.delete(0, tk.END)
+                    entry._placeholder = False
+                    if is_password and not self.show_state['visible']:
+                        entry.config(show='*')
+
+            def on_focus_out(event):
+                if entry.get().strip() == '':
+                    entry.insert(0, hint)
+                    entry._placeholder = True
+                    entry.config(show='')
+
+            entry.insert(0, hint)
+            entry._placeholder = True
+            entry.bind('<FocusIn>', on_focus_in)
+            entry.bind('<FocusOut>', on_focus_out)
+
+        _make_placeholder(self.username_entry, 'Username', is_password=False)
+        _make_placeholder(self.password_entry, 'Password', is_password=True)
 
         self.error_label = ttk.Label(card, text="", foreground="#ff6b6b", background=BG_COLOR)
         self.error_label.pack(pady=(4, 0))
@@ -87,6 +127,7 @@ class MainMenuView:
         self.root.title("Main Menu")
         self.root.geometry("650x350")
         self.root.configure(bg=BG_COLOR)
+        apply_dark_theme(self.root)
         self.build()
 
     def build(self):
@@ -120,6 +161,7 @@ class TrafficView:
         self.root.title("Traffic Light Control")
         self.root.geometry("400x500")
         self.root.configure(bg=BG_COLOR)
+        apply_dark_theme(self.root)
         self.build()
 
     def build(self):
