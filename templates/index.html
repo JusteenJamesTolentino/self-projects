@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>WebSocket Latency Test</title>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        padding: 24px;
+        background: #0f1720;
+        color: #e6eef6;
+      }
+      .card {
+        background: #0b1220;
+        padding: 18px;
+        border-radius: 8px;
+        border: 1px solid #ffffff;
+        max-width: 720px;
+      }
+      button {
+        padding: 8px 12px;
+        border-radius: 6px;
+        background: #1f6feb;
+        color: white;
+        border: none;
+      }
+      .muted {
+        color: #9fb0c8;
+      }
+      .latency {
+        font-size: 2rem;
+        font-weight: 700;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>WebSocket Latency Test</h1>
+      <p class="muted">
+        This page connects to a WebSocket server and measures round-trip time
+        (RTT).
+      </p>
+
+      <div
+        style="display: flex; gap: 12px; align-items: center; margin-top: 12px"
+      >
+        <label>Server:</label>
+        <input
+          id="hostInput"
+          value="ws://localhost:6789"
+          style="
+            flex: 1;
+            padding: 6px;
+            border-radius: 6px;
+            border: 1px solid #ffffff;
+            background: #071024;
+            color: #e6eef6;
+          "
+        />
+        <button id="connectBtn">Connect</button>
+        <button id="pingBtn" disabled>Ping</button>
+        <label style="display: flex; align-items: center; gap: 6px"
+          ><input id="autoChk" type="checkbox" /> Auto</label
+        >
+      </div>
+
+      <div
+        style="margin-top: 18px; display: flex; gap: 16px; align-items: center"
+      >
+        <div>
+          <div class="muted">Last RTT</div>
+          <div id="rtt" class="latency">— ms</div>
+        </div>
+        <div>
+          <div class="muted">Status</div>
+          <div id="status">disconnected</div>
+        </div>
+      </div>
+
+      <div style="margin-top: 14px" class="muted">
+        Open the browser console to see detailed logs.
+      </div>
+    </div>
+
+    <script>
+      let ws = null;
+      let lastPingAt = 0;
+      const rttEl = document.getElementById("rtt");
+      const statusEl = document.getElementById("status");
+      const connectBtn = document.getElementById("connectBtn");
+      const pingBtn = document.getElementById("pingBtn");
+      const hostInput = document.getElementById("hostInput");
+
+      function setStatus(s) {
+        statusEl.textContent = s;
+      }
+
+      connectBtn.addEventListener("click", () => {
+        const url = hostInput.value.trim();
+        if (ws) ws.close();
+        ws = new WebSocket(url);
+        ws.addEventListener("open", () => {
+          setStatus("connected");
+          pingBtn.disabled = false;
+          console.log("ws open");
+        });
+        ws.addEventListener("close", () => {
+          onDisconnect();
+          console.log("ws close");
+        });
+        ws.addEventListener("error", (e) => {
+          setStatus("error");
+          console.error(e);
+        });
+        ws.addEventListener("message", (ev) => {
+          const now = performance.now();
+          const sent = Number(ev.data);
+          if (!isNaN(sent) && sent > 0) {
+            const rtt = Math.round(now - sent);
+            rttEl.textContent = rtt + " ms";
+          }
+        });
+      });
+
+      pingBtn.addEventListener("click", () => {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        const t = performance.now();
+        ws.send(String(t));
+      });
+
+      const autoChk = document.getElementById("autoChk");
+      let autoInterval = null;
+
+      function startAutoPing() {
+        if (autoInterval) return;
+        autoInterval = setInterval(() => {
+          if (!ws || ws.readyState !== WebSocket.OPEN) return;
+          const t = performance.now();
+          ws.send(String(t));
+        }, 500);
+      }
+
+      function stopAutoPing() {
+        if (!autoInterval) return;
+        clearInterval(autoInterval);
+        autoInterval = null;
+      }
+
+      autoChk.addEventListener("change", (e) => {
+        if (e.target.checked) startAutoPing();
+        else stopAutoPing();
+      });
+
+      // ensure auto ping stops on disconnect
+      function onDisconnect() {
+        stopAutoPing();
+        setStatus("disconnected");
+        pingBtn.disabled = true;
+      }
+
+      // wire into ws events in connect flow
+      const _origConnect = connectBtn.onclick;
+    </script>
+  </body>
+</html>

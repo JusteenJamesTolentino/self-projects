@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html
+  lang="en"
+  data-theme="dark"
+  class="min-h-screen bg-slate-900 text-slate-100"
+>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Multiplayer Snake</title>
+    <!-- Use user-provided Tailwind/DaisyUI CDN -->
+    <link
+      href="https://cdn.jsdelivr.net/npm/daisyui@5"
+      rel="stylesheet"
+      type="text/css"
+    />
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  </head>
+  <body class="antialiased">
+    <div class="wrap max-w-4xl mx-auto p-3 sm:p-4">
+      <div
+        class="hud flex flex-col md:flex-row items-start md:items-center justify-between gap-3 md:gap-4 p-3"
+      >
+        <div class="flex gap-2 md:gap-3 items-center flex-wrap">
+          <div class="scores flex gap-2 flex-wrap items-center" id="scores">
+            Players: —
+          </div>
+          <div id="status" class="text-sm opacity-90">Disconnected</div>
+          <div id="latency" class="text-sm opacity-90">Latency: — ms</div>
+        </div>
+        <div
+          class="controls flex flex-wrap gap-2 items-center w-full md:w-auto"
+        >
+          <input
+            id="name"
+            placeholder="Your name"
+            value=""
+            class="input input-ghost input-sm w-32 text-white bg-transparent"
+          />
+          <input
+            id="room"
+            placeholder="room"
+            value="lobby"
+            class="input input-ghost input-sm w-20 text-white bg-transparent"
+          />
+          <input
+            id="host"
+            value="ws://192.168.11.132"
+            class="input input-ghost input-sm text-white bg-transparent hidden sm:inline-flex"
+          />
+          <button id="connect" class="btn btn-primary btn-sm">Connect</button>
+          <button id="join" class="btn btn-accent btn-sm" disabled>Join</button>
+          <button id="startGame" class="btn btn-secondary btn-sm" disabled>
+            Start
+          </button>
+        </div>
+      </div>
+
+      <div
+        class="board bg-slate-900/20 border border-white/10 rounded-md p-2 mt-3"
+        id="boardContainer"
+      >
+        <canvas
+          id="board"
+          width="504"
+          height="360"
+          class="block mx-auto"
+        ></canvas>
+      </div>
+
+      <!-- mobile d-pad: centered bottom on small screens, hidden on md+ -->
+      <div
+        id="mobileControls"
+        class="mobile-controls fixed left-1/2 -translate-x-1/2 bottom-4 z-50 grid grid-cols-3 grid-rows-3 gap-2 w-36 h-36 rounded-lg p-2 md:hidden bg-slate-800/50 backdrop-blur-sm select-none"
+      >
+        <div class="invisible"></div>
+        <button
+          data-dir="up"
+          class="w-12 h-12 rounded-lg bg-white/5 text-white border border-white/10 flex items-center justify-center"
+        >
+          ↑
+        </button>
+        <div class="invisible"></div>
+
+        <button
+          data-dir="left"
+          class="w-12 h-12 rounded-lg bg-white/5 text-white border border-white/10 flex items-center justify-center"
+        >
+          ←
+        </button>
+        <div class="invisible"></div>
+        <button
+          data-dir="right"
+          class="w-12 h-12 rounded-lg bg-white/5 text-white border border-white/10 flex items-center justify-center"
+        >
+          →
+        </button>
+
+        <div class="invisible"></div>
+        <button
+          data-dir="down"
+          class="w-12 h-12 rounded-lg bg-white/5 text-white border border-white/10 flex items-center justify-center"
+        >
+          ↓
+        </button>
+        <div class="invisible"></div>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        const hostEl = document.getElementById("host");
+        const connectBtn = document.getElementById("connect");
+        const canvas = document.getElementById("board");
+        const ctx = canvas.getContext("2d");
+        const scoresEl = document.getElementById("scores");
+        const mobileControls = document.getElementById("mobileControls");
+        const nameEl = document.getElementById("name");
+        const roomEl = document.getElementById("room");
+        const joinBtn = document.getElementById("join");
+        const startGameBtn = document.getElementById("startGame");
+        const latencyEl = document.getElementById("latency");
+
+        let ws = null;
+        let myId = null;
+        let state = null;
+        let currentRoom = "lobby";
+        let CELL = 18;
+        const W = 28,
+          H = 20;
+
+        const pressIntervals = new Map();
+        // helper to set D-pad size responsively
+        function sizeDpad() {
+          const mc = document.getElementById("mobileControls");
+          const small = window.innerWidth < 360;
+          mc.classList.toggle("w-32", small);
+          mc.classList.toggle("h-32", small);
+          mc.classList.toggle("w-36", !small);
+          mc.classList.toggle("h-36", !small);
+          mc.querySelectorAll("button").forEach((b) => {
+            b.classList.toggle("w-10", small);
+            b.classList.toggle("h-10", small);
+            b.classList.toggle("w-12", !small);
+            b.classList.toggle("h-12", !small);
+          });
+        }
+        function sendDir(dir) {
+          if (ws && ws.readyState === WebSocket.OPEN)
+            ws.send(JSON.stringify({ type: "dir", dir }));
+        }
+
+        function draw() {
+          if (!state) return;
+          // clear and paint bg using CSS pixel space with DPR transform already applied
+          const dpr = window.devicePixelRatio || 1;
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.fillStyle = "#061428";
+          const pxW = Math.floor(canvas.width / dpr);
+          const pxH = Math.floor(canvas.height / dpr);
+          ctx.fillRect(0, 0, pxW, pxH);
+          // subtle grid
+          ctx.strokeStyle = "rgba(255,255,255,0.03)";
+          ctx.lineWidth = 1;
+          for (let x = 0; x <= W; x++) {
+            ctx.beginPath();
+            ctx.moveTo(x * CELL + 0.5, 0);
+            ctx.lineTo(x * CELL + 0.5, H * CELL);
+            ctx.stroke();
+          }
+          for (let y = 0; y <= H; y++) {
+            ctx.beginPath();
+            ctx.moveTo(0, y * CELL + 0.5);
+            ctx.lineTo(W * CELL, y * CELL + 0.5);
+            ctx.stroke();
+          }
+          for (const f of state.food || []) {
+            if (f.length === 3 && f[2] !== currentRoom) continue;
+            ctx.fillStyle = "#ffcc00";
+            ctx.fillRect(f[0] * CELL, f[1] * CELL, CELL, CELL);
+          }
+          for (const pid in state.players) {
+            const p = state.players[pid];
+            if (p.room !== currentRoom) continue;
+            ctx.fillStyle = p.color || "#66d9e8";
+            for (let i = 0; i < p.snake.length; i++) {
+              const [x, y] = p.snake[i];
+              ctx.fillRect(x * CELL, y * CELL, CELL - 1, CELL - 1);
+            }
+          }
+        }
+
+        function updateScores() {
+          if (!state) return;
+          scoresEl.innerHTML = "";
+          for (const pid in state.players) {
+            const p = state.players[pid];
+            if (p.room !== currentRoom) continue;
+            const el = document.createElement("div");
+            el.className = "player-badge p-1 rounded bg-white/4 text-sm";
+            el.textContent = `${p.name}: ${p.score}`;
+            el.style.borderLeft = `6px solid ${p.color || "#1f6feb"}`;
+            scoresEl.appendChild(el);
+          }
+        }
+
+        async function connectWithRetry(attempts = 6, baseDelay = 500) {
+          document.getElementById("status").textContent = "Connecting...";
+          for (let i = 0; i < attempts; i++) {
+            try {
+              const r = await fetch("/ws-port");
+              if (r.ok) {
+                const j = await r.json();
+                if (j.port) {
+                  try {
+                    const u = new URL(hostEl.value);
+                    u.port = j.port;
+                    hostEl.value = u.toString();
+                  } catch (e) {
+                    hostEl.value = "ws://192.168.11.132:" + j.port;
+                  }
+                }
+              }
+            } catch (e) {}
+
+            if (ws)
+              try {
+                ws.close();
+              } catch (e) {}
+
+            let opened = false;
+            try {
+              ws = new WebSocket(hostEl.value);
+            } catch (e) {
+              document.getElementById("status").textContent = "Invalid host";
+              return;
+            }
+
+            const tryPromise = new Promise((resolve, reject) => {
+              const tid = setTimeout(() => {
+                if (!opened) {
+                  try {
+                    ws.close();
+                  } catch (e) {}
+                  reject(new Error("timeout"));
+                }
+              }, 4000);
+              ws.addEventListener("open", () => {
+                opened = true;
+                clearTimeout(tid);
+                resolve();
+              });
+              ws.addEventListener("error", () => {
+                clearTimeout(tid);
+                try {
+                  ws.close();
+                } catch (e) {}
+                reject(new Error("error"));
+              });
+              ws.addEventListener("close", () => {
+                if (!opened) {
+                  clearTimeout(tid);
+                  reject(new Error("closed"));
+                }
+              });
+            });
+
+            try {
+              await tryPromise;
+              joinBtn.disabled = false;
+              startGameBtn.disabled = false;
+              currentRoom = roomEl.value || "lobby";
+              ws.send(
+                JSON.stringify({
+                  type: "join",
+                  name: nameEl.value || undefined,
+                  room: currentRoom,
+                })
+              );
+              document.getElementById("status").textContent =
+                "Connected (joining " + currentRoom + ")";
+
+              ws.addEventListener("message", (ev) => {
+                try {
+                  const d = JSON.parse(ev.data);
+                  if (d.type === "welcome") myId = d.id;
+                  else if (d.type === "pong" && d.ts) {
+                    const rtt = Date.now() - d.ts;
+                    if (latencyEl) latencyEl.textContent = `Latency: ${rtt} ms`;
+                  } else if (d.type === "state") {
+                    state = d;
+                    if (d.room && typeof d.running !== "undefined") {
+                      const isRunning = d.running;
+                      const st = document.getElementById("status");
+                      st.textContent = isRunning
+                        ? "Running — room: " + d.room
+                        : "Waiting — room: " + d.room;
+                    }
+                    updateScores();
+                    resizeCanvas();
+                    draw();
+                  }
+                } catch (e) {}
+              });
+
+              ws.addEventListener("close", () => {
+                joinBtn.disabled = true;
+                startGameBtn.disabled = true;
+                document.getElementById("status").textContent = "Disconnected";
+              });
+              ws.addEventListener("error", (ev) => {
+                console.warn("ws error", ev);
+                document.getElementById("status").textContent =
+                  "Connection failed";
+              });
+              return;
+            } catch (err) {
+              const wait = baseDelay * Math.pow(1.6, i);
+              document.getElementById("status").textContent =
+                "Retrying connection (" + (i + 1) + "/" + attempts + ")...";
+              await new Promise((res) => setTimeout(res, wait));
+              continue;
+            }
+          }
+          document.getElementById("status").textContent =
+            "Unable to connect to WebSocket server";
+        }
+
+        connectBtn.addEventListener("click", () => connectWithRetry());
+        joinBtn.addEventListener("click", () => {
+          if (!ws || ws.readyState !== WebSocket.OPEN) return;
+          currentRoom = roomEl.value || "lobby";
+          ws.send(
+            JSON.stringify({
+              type: "join",
+              name: nameEl.value || undefined,
+              room: currentRoom,
+            })
+          );
+        });
+        startGameBtn.addEventListener("click", () => {
+          if (!ws || ws.readyState !== WebSocket.OPEN) return;
+          const room = roomEl.value || "lobby";
+          ws.send(JSON.stringify({ type: "start", room }));
+        });
+
+        window.addEventListener("keydown", (e) => {
+          if (!ws || ws.readyState !== WebSocket.OPEN) return;
+          const m = { type: "dir" };
+          if (e.key === "ArrowUp") m.dir = "up";
+          else if (e.key === "ArrowDown") m.dir = "down";
+          else if (e.key === "ArrowLeft") m.dir = "left";
+          else if (e.key === "ArrowRight") m.dir = "right";
+          else return;
+          ws.send(JSON.stringify(m));
+        });
+
+        setInterval(() => {
+          if (!ws || ws.readyState !== WebSocket.OPEN) return;
+          try {
+            ws.send(JSON.stringify({ type: "ping", ts: Date.now() }));
+          } catch (e) {}
+        }, 2000);
+
+        mobileControls.addEventListener("click", (e) => {
+          const b = e.target.closest("button");
+          if (!b) return;
+          const dir = b.getAttribute("data-dir");
+          if (ws && ws.readyState === WebSocket.OPEN)
+            ws.send(JSON.stringify({ type: "dir", dir }));
+        });
+
+        mobileControls.querySelectorAll("button[data-dir]").forEach((btn) => {
+          let iv = null;
+          const dir = btn.getAttribute("data-dir");
+          btn.addEventListener("pointerdown", (ev) => {
+            ev.preventDefault();
+            btn.classList.add("bg-white/10", "scale-95");
+            sendDir(dir);
+            iv = setInterval(() => sendDir(dir), 140);
+            pressIntervals.set(btn, iv);
+          });
+          const clear = () => {
+            const i = pressIntervals.get(btn);
+            if (i) clearInterval(i);
+            pressIntervals.delete(btn);
+            btn.classList.remove("bg-white/10", "scale-95");
+          };
+          btn.addEventListener("pointerup", clear);
+          btn.addEventListener("pointercancel", clear);
+          btn.addEventListener("pointerleave", clear);
+        });
+
+        function resizeCanvas() {
+          const container = document.getElementById("boardContainer");
+          const hud = document.querySelector(".hud");
+          const mobileControlsEl = document.getElementById("mobileControls");
+          const vw = container.clientWidth;
+          const totalVH = window.innerHeight;
+          const hudH = hud ? hud.getBoundingClientRect().height : 0;
+          const controlsH =
+            mobileControlsEl &&
+            getComputedStyle(mobileControlsEl).display !== "none"
+              ? mobileControlsEl.getBoundingClientRect().height + 24
+              : 0;
+          const availableH = Math.max(120, totalVH - hudH - controlsH - 48);
+          const cellByWidth = Math.floor(vw / W);
+          const cellByHeight = Math.floor(availableH / H);
+          const rawCell = Math.min(cellByWidth, cellByHeight);
+          let scaleFactorDesktop = 1.15;
+          let scaleFactorMobile = 0.66;
+          let scaleFactor =
+            window.innerWidth <= 640 ? scaleFactorMobile : scaleFactorDesktop;
+          if (window.innerWidth <= 360) scaleFactor = 0.58;
+          else if (window.innerWidth <= 420) scaleFactor = 0.66;
+          const cellSize = Math.max(6, Math.floor(rawCell * scaleFactor));
+          CELL = cellSize;
+          const cw = cellSize * W;
+          const ch = cellSize * H;
+          canvas.style.width = cw + "px";
+          canvas.style.height = ch + "px";
+          const dpr = window.devicePixelRatio || 1;
+          canvas.width = Math.floor(cw * dpr);
+          canvas.height = Math.floor(ch * dpr);
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          sizeDpad();
+        }
+
+        window.addEventListener("resize", () => {
+          resizeCanvas();
+          draw();
+        });
+        setInterval(() => {
+          draw();
+          updateScores();
+        }, 150);
+        window.__snake_debug = { resizeCanvas, draw };
+        resizeCanvas();
+        sizeDpad();
+      })();
+    </script>
+  </body>
+</html>

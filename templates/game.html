@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>WebSocket Reflex Game</title>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+        background: #071024;
+        color: #e6eef6;
+      }
+      .board {
+        width: 420px;
+        height: 420px;
+        background: #0b1220;
+        border-radius: 12px;
+        border: 1px solid #ffffff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+      }
+      .target {
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        background: #1f6feb;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+      }
+      .hud {
+        position: absolute;
+        left: 14px;
+        top: 14px;
+      }
+      .score {
+        font-size: 1.2rem;
+        font-weight: 700;
+      }
+      .muted {
+        color: #9fb0c8;
+      }
+      .controls {
+        position: absolute;
+        right: 14px;
+        top: 14px;
+        display: flex;
+        gap: 8px;
+      }
+      button {
+        padding: 6px 10px;
+        border-radius: 6px;
+        border: none;
+        background: #1f6feb;
+        color: white;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="board" id="board">
+      <div class="hud">
+        <div class="score">Score: <span id="score">0</span></div>
+        <div class="muted">RTT: <span id="rtt">— ms</span></div>
+      </div>
+      <div class="controls">
+        <input
+          id="host"
+          value="ws://localhost:6789"
+          style="
+            padding: 6px;
+            border-radius: 6px;
+            background: #071024;
+            color: #e6eef6;
+            border: 1px solid #ffffff;
+          "
+        />
+        <button id="connect">Connect</button>
+        <button id="start" disabled>Start</button>
+      </div>
+      <div class="target" id="target" style="display: none">GO</div>
+    </div>
+
+    <script>
+      let ws = null;
+      const hostEl = document.getElementById("host");
+      const connectBtn = document.getElementById("connect");
+      const startBtn = document.getElementById("start");
+      const target = document.getElementById("target");
+      const scoreEl = document.getElementById("score");
+      const rttEl = document.getElementById("rtt");
+      let score = 0;
+      let gameRunning = false;
+      let showTimeout = null;
+
+      function setRtt(ms) {
+        rttEl.textContent = ms + " ms";
+      }
+
+      connectBtn.addEventListener("click", () => {
+        if (ws) ws.close();
+        ws = new WebSocket(hostEl.value);
+        ws.addEventListener("open", () => {
+          startBtn.disabled = false;
+          console.log("ws open");
+        });
+        ws.addEventListener("close", () => {
+          startBtn.disabled = true;
+          console.log("ws close");
+        });
+        ws.addEventListener("message", (ev) => {
+          const now = performance.now();
+          const sent = Number(ev.data);
+          if (!isNaN(sent) && sent > 0) {
+            const rtt = Math.round(now - sent);
+            setRtt(rtt);
+          }
+        });
+      });
+
+      function showTarget() {
+        const board = document.getElementById("board");
+        const bw = board.clientWidth,
+          bh = board.clientHeight;
+        const tw = target.clientWidth,
+          th = target.clientHeight;
+        const x = Math.random() * (bw - tw - 40) + 20;
+        const y = Math.random() * (bh - th - 40) + 20;
+        target.style.left = x + "px";
+        target.style.top = y + "px";
+        target.style.display = "flex";
+        target.textContent = "GO";
+        const t = performance.now();
+        if (ws && ws.readyState === WebSocket.OPEN) ws.send(String(t));
+        showTimeout = setTimeout(() => {
+          hideTarget();
+        }, 1200);
+      }
+
+      function hideTarget() {
+        target.style.display = "none";
+      }
+
+      target.addEventListener("click", () => {
+        if (!gameRunning) return;
+        score += 1;
+        scoreEl.textContent = score;
+        target.textContent = "HIT";
+        hideTarget();
+        if (showTimeout) clearTimeout(showTimeout);
+        setTimeout(() => {
+          if (gameRunning) showTarget();
+        }, 400);
+      });
+
+      startBtn.addEventListener("click", () => {
+        if (gameRunning) {
+          gameRunning = false;
+          startBtn.textContent = "Start";
+          hideTarget();
+        } else {
+          gameRunning = true;
+          score = 0;
+          scoreEl.textContent = score;
+          startBtn.textContent = "Stop";
+          setTimeout(showTarget, 600);
+        }
+      });
+    </script>
+  </body>
+</html>
