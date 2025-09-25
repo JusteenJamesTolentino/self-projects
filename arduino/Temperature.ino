@@ -1,6 +1,6 @@
 #include "DHT.h"
 
-#define DHTPIN 7       
+#define DHTPIN 7 // Pin where the DHT11 is connected
 #define DHTTYPE DHT11 
 
 DHT dht(DHTPIN, DHTTYPE);
