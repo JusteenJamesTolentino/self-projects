@@ -8,7 +8,7 @@ BTN_COLOR = "#007acc"
 FONT_MAIN = ("Segoe UI", 12)
 FONT_TITLE = ("Segoe UI", 16, "bold")
 
-COM = "/dev/ttyUSB0"
+COM = "/dev/ttyUSB1"
 arduino = serial.Serial(port=COM, baudrate=9600, timeout=1)
 
 def send_command(command):
@@ -166,7 +166,7 @@ def main_menu():
 
     menu_buttons = [
         ("TMS APPLICATION", open_tms),
-        ("HUMIDITY & TEMPERATURE", lambda: humidity_window()),
+        ("HUMIDITY & TEMPERATURE", lambda: humidity_temperature_window()),
         ("LOCK / UNLOCK SYSTEM", lambda: lock_window()),
         ("ITEM DETECTOR SYSTEM", lambda: item_detector_window()),
         ("DISTANCE MEASURE SYSTEM", lambda: distance_window()),
@@ -378,15 +378,174 @@ def traffic_light_control():
     app.mainloop()
 
 
-def humidity_window():
+
+def humidity_temperature_window():
     win = tk.Toplevel()
     win.title("Humidity & Temperature")
-    win.geometry("420x300")
+    win.geometry("560x560")
     win.configure(bg=BG_COLOR)
     apply_dark_theme(win)
-    ttk.Label(win, text="Humidity & Temperature", font=("Segoe UI", 14, "bold")).pack(pady=12)
-    ttk.Label(win, text="(Placeholder)").pack(pady=20)
-    ttk.Button(win, text="Close", command=win.destroy).pack(pady=10)
+
+    ttk.Label(win, text="Humidity & Temperature", font=("Segoe UI", 14, "bold")).pack(pady=10)
+
+    # Top canvas area for gauges
+    gauge_frame = ttk.Frame(win)
+    gauge_frame.pack(pady=6, padx=8, fill="x")
+
+    canvas = tk.Canvas(gauge_frame, width=520, height=200, bg=BG_COLOR, highlightthickness=0)
+    canvas.pack()
+
+    # Temperature gauge (left) - semicircle gauge
+    t_cx, t_cy, t_r = 140, 110, 80
+    canvas.create_oval(t_cx - t_r, t_cy - t_r, t_cx + t_r, t_cy + t_r, fill="#222222", outline="#3a3a3a", width=2)
+    # static ticks/labels
+    for i in range(0, 11):
+        angle = 180 + (i * 18)  # 180..360
+        rad = angle * 3.14159 / 180
+        x1 = t_cx + (t_r - 8) * tk.math.cos(rad) if hasattr(tk, 'math') else t_cx + (t_r - 8) * __import__('math').cos(rad)
+        y1 = t_cy + (t_r - 8) * tk.math.sin(rad) if hasattr(tk, 'math') else t_cy + (t_r - 8) * __import__('math').sin(rad)
+        x2 = t_cx + (t_r - 2) * (__import__('math').cos(rad))
+        y2 = t_cy + (t_r - 2) * (__import__('math').sin(rad))
+        canvas.create_line(x1, y1, x2, y2, fill="#555555")
+
+    # Arc that will represent current temperature (start at 180, extent variable)
+    temp_arc = canvas.create_arc(t_cx - t_r, t_cy - t_r, t_cx + t_r, t_cy + t_r, start=180, extent=0, style='arc', outline='#ff6b6b', width=12)
+    temp_text = canvas.create_text(t_cx, t_cy + 30, text="-- °C", fill=FG_COLOR, font=("Segoe UI", 12, "bold"))
+    canvas.create_text(t_cx, t_cy - t_r - 10, text="Temperature", fill="#bfc7d6", font=("Segoe UI", 10))
+
+    # Humidity bar (right)
+    h_x, h_y = 340, 40
+    h_w, h_h = 160, 160
+    canvas.create_rectangle(h_x, h_y, h_x + h_w, h_y + h_h, outline="#3a3a3a", fill="#222222", width=2)
+    # background for fill
+    humid_fill = canvas.create_rectangle(h_x + 6, h_y + 6 + h_h, h_x + h_w - 6, h_y + h_h - 6, outline="", fill="#00bcd4")
+    humid_text = canvas.create_text(h_x + h_w / 2, h_y + h_h + 18, text="-- %", fill=FG_COLOR, font=("Segoe UI", 12, "bold"))
+    canvas.create_text(h_x + h_w / 2, h_y - 10, text="Humidity", fill="#bfc7d6", font=("Segoe UI", 10))
+
+    # Table-like frame for stats (min/max)
+    stats_frame = ttk.Frame(win)
+    stats_frame.pack(pady=8)
+
+    ttk.Label(stats_frame, text="", width=12).grid(row=0, column=0)
+    ttk.Label(stats_frame, text="Current", width=12).grid(row=0, column=1)
+    ttk.Label(stats_frame, text="Highest", width=12).grid(row=0, column=2)
+    ttk.Label(stats_frame, text="Lowest", width=12).grid(row=0, column=3)
+
+    ttk.Label(stats_frame, text="Temp (°C)", width=12).grid(row=1, column=0)
+    temp_cur = ttk.Label(stats_frame, text="--", width=12)
+    temp_cur.grid(row=1, column=1)
+    temp_high = ttk.Label(stats_frame, text="--", width=12)
+    temp_high.grid(row=1, column=2)
+    temp_low = ttk.Label(stats_frame, text="--", width=12)
+    temp_low.grid(row=1, column=3)
+
+    ttk.Label(stats_frame, text="Humid (%)", width=12).grid(row=2, column=0)
+    humid_cur = ttk.Label(stats_frame, text="--", width=12)
+    humid_cur.grid(row=2, column=1)
+    humid_high = ttk.Label(stats_frame, text="--", width=12)
+    humid_high.grid(row=2, column=2)
+    humid_low = ttk.Label(stats_frame, text="--", width=12)
+    humid_low.grid(row=2, column=3)
+
+    # State for min/max
+    stats = {
+        "temp_high": None,
+        "temp_low": None,
+        "humid_high": None,
+        "humid_low": None
+    }
+
+    def update_stats(temp, humid):
+        if temp is not None:
+            if stats["temp_high"] is None or temp > stats["temp_high"]:
+                stats["temp_high"] = temp
+            if stats["temp_low"] is None or temp < stats["temp_low"]:
+                stats["temp_low"] = temp
+        if humid is not None:
+            if stats["humid_high"] is None or humid > stats["humid_high"]:
+                stats["humid_high"] = humid
+            if stats["humid_low"] is None or humid < stats["humid_low"]:
+                stats["humid_low"] = humid
+
+    def parse_arduino_line(line):
+        # Expects: "Humidity: 55.00 %\tTemperature: 28.00 °C"
+        try:
+            parts = line.strip().split()
+            hidx = parts.index("Humidity:")
+            humidity = float(parts[hidx+1])
+            tidx = parts.index("Temperature:")
+            temp = float(parts[tidx+1])
+            return temp, humidity
+        except Exception:
+            return None, None
+
+    # store references to canvas items so we can update them
+    widgets = {
+        'canvas': canvas,
+        'temp_arc': temp_arc,
+        'temp_text': temp_text,
+        'humid_fill': humid_fill,
+        'humid_text': humid_text
+    }
+
+    # sensible ranges for visualization
+    MIN_TEMP, MAX_TEMP = 0.0, 50.0
+    MIN_HUM, MAX_HUM = 0.0, 100.0
+
+    def fetch_and_update():
+        try:
+            arduino.reset_input_buffer()
+            send_command('R')
+            # give Arduino a short time to respond
+            win.after(150)
+            line = arduino.readline().decode(errors="ignore").strip()
+            temp, humid = parse_arduino_line(line)
+            if temp is not None and humid is not None:
+                # update numeric labels
+                temp_cur.config(text=f"{temp:.2f}")
+                humid_cur.config(text=f"{humid:.2f}")
+                update_stats(temp, humid)
+                temp_high.config(text=f"{stats['temp_high']:.2f}")
+                temp_low.config(text=f"{stats['temp_low']:.2f}")
+                humid_high.config(text=f"{stats['humid_high']:.2f}")
+                humid_low.config(text=f"{stats['humid_low']:.2f}")
+
+                # update temperature arc (map temp to 0..180 degrees)
+                pct_t = (temp - MIN_TEMP) / (MAX_TEMP - MIN_TEMP)
+                pct_t = max(0.0, min(1.0, pct_t))
+                extent = int(180 * pct_t)
+                canvas.itemconfig(widgets['temp_arc'], extent=extent)
+                canvas.itemconfig(widgets['temp_text'], text=f"{temp:.1f} °C")
+
+                # update humidity fill (map humid to height)
+                pct_h = (humid - MIN_HUM) / (MAX_HUM - MIN_HUM)
+                pct_h = max(0.0, min(1.0, pct_h))
+                # compute fill rectangle coords
+                x1 = h_x + 6
+                x2 = h_x + h_w - 6
+                y_bottom = h_y + h_h - 6
+                y_top = h_y + 6 + (1 - pct_h) * (h_h - 12)
+                canvas.coords(widgets['humid_fill'], x1, y_top, x2, y_bottom)
+                canvas.itemconfig(widgets['humid_text'], text=f"{humid:.1f} %")
+
+                print(f"[Realtime] Temp: {temp:.2f} °C   Humid: {humid:.2f} %")
+            else:
+                temp_cur.config(text="--")
+                humid_cur.config(text="--")
+        except Exception:
+            # don't raise for serial/hardware issues; show placeholders
+            temp_cur.config(text="--")
+            humid_cur.config(text="--")
+
+    def auto_update():
+        fetch_and_update()
+        win.after(1000, auto_update)  # 1s interval
+
+    btn_frame = ttk.Frame(win)
+    btn_frame.pack(pady=10)
+    ttk.Button(btn_frame, text="Close", command=win.destroy).pack(side=tk.LEFT, padx=8)
+
+    auto_update()
 
 
 def lock_window():
