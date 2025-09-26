@@ -10,6 +10,8 @@ def initialize_serial(port, baudrate=9600):
 def send_data(ser, data):
     if ser and ser.is_open:
         try:
+            if not data.endswith("\n"):
+                data += "\n"
             ser.write(data.encode())
         except Exception as e:
             print(f"Error sending data: {e}")

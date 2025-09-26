@@ -1,17 +1,15 @@
 void setup() {
-    Serial.begin(115200); // Initialize serial communication at 115200 baud rate
+    Serial.begin(115200);
 }
 
 void loop() {
     if (Serial.available() > 0) {
-        String incomingData = Serial.readStringUntil('\n'); // Read incoming data until newline
-        processIncomingData(incomingData); // Process the received data
+        String incomingData = Serial.readStringUntil('\n');
+        processIncomingData(incomingData);
     }
 }
 
 void processIncomingData(String data) {
-    // Placeholder for processing incoming data from VEX Robot
-    // Implement your protocol handling logic here
     Serial.print("Received: ");
-    Serial.println(data); // Echo the received data back for debugging
+    Serial.println(data);
 }
