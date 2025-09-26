@@ -1,4 +1,12 @@
-import serial
+
+
+try:
+   
+    import serial
+    from serial.tools import list_ports
+except Exception:
+    serial = None
+    list_ports = None
 import tkinter as tk
 from tkinter import ttk, messagebox
 
@@ -9,11 +17,69 @@ FONT_MAIN = ("Segoe UI", 12)
 FONT_TITLE = ("Segoe UI", 16, "bold")
 
 COM = "/dev/ttyUSB1"
-arduino = serial.Serial(port=COM, baudrate=9600, timeout=1)
+arduino = None
+
+
+def auto_detect_serial():
+    if list_ports is None:
+        return None
+    ports = list_ports.comports()
+    pref = None
+    for p in ports:
+        if '/dev/ttyUSB' in p.device:
+            return p.device
+        if '/dev/ttyACM' in p.device and pref is None:
+            pref = p.device
+    if ports:
+        return ports[0].device
+    return pref
+
+
+def init_serial(port=None, baudrate=9600, timeout=1):
+    global arduino
+    if serial is None:
+        return False
+    try:
+        if port is None:
+            port = auto_detect_serial()
+        if port is None:
+            return False
+        if arduino is not None and hasattr(arduino, 'is_open') and arduino.is_open:
+            try:
+                arduino.close()
+            except Exception:
+                pass
+        arduino = serial.Serial(port=port, baudrate=baudrate, timeout=timeout)
+        print(f"[Serial] Connected to {port}")
+        return True
+    except Exception as e:
+        print(f"[Serial] Could not open port {port}: {e}")
+        arduino = None
+        return False
+
+
+def close_serial():
+    global arduino
+    try:
+        if arduino is not None and hasattr(arduino, 'is_open') and arduino.is_open:
+            arduino.close()
+    except Exception:
+        pass
+    arduino = None
+
+
+def is_serial_connected():
+    return arduino is not None and hasattr(arduino, 'is_open') and arduino.is_open
 
 def send_command(command):
-    arduino.write(command.encode())
-    print(f"OUTPUT:  {command}")
+    if is_serial_connected():
+        try:
+            arduino.write(command.encode())
+            print(f"OUTPUT -> {command}")
+        except Exception as e:
+            print(f"[Serial] Write failed: {e}")
+    else:
+        print(f"[Serial] Not connected, would send: {command}")
 
 def apply_dark_theme(root):
     style = ttk.Style(root)
@@ -27,7 +93,6 @@ def apply_dark_theme(root):
 
 
 def draw_rounded_rect(canvas, x1, y1, x2, y2, r=20, **kwargs):
-    """Draw a rounded rectangle on `canvas`. Returns the created object ids."""
     points = [
         (x1 + r, y1),
         (x2 - r, y1),
@@ -39,9 +104,12 @@ def draw_rounded_rect(canvas, x1, y1, x2, y2, r=20, **kwargs):
         (x1, y1 + r)
     ]
    
-    return canvas.create_polygon(
-        [coord for p in points for coord in p], smooth=True, splinesteps=20, **kwargs
-    )
+    coords = []
+    for p in points:
+        for coord in p:
+            coords.append(coord)
+
+    return canvas.create_polygon(coords, smooth=True, splinesteps=20, **kwargs)
 
 def login_window():
     login = tk.Tk()
@@ -50,7 +118,6 @@ def login_window():
     login.configure(bg=BG_COLOR)
     apply_dark_theme(login)
 
-    
     container = ttk.Frame(login)
     container.pack(expand=True, fill="both")
 
@@ -103,8 +170,13 @@ def login_window():
 
     def toggle_show():
         show_state["visible"] = not show_state["visible"]
-        password_entry.config(show=("" if show_state["visible"] else "*"))
-        eye_btn.config(text=("👁️" if show_state["visible"] else "🙈"))
+
+        if show_state["visible"]:
+            password_entry.config(show="")
+            eye_btn.config(text="👁️")
+        else:
+            password_entry.config(show="*")
+            eye_btn.config(text="🙈")
 
     eye_btn = ttk.Button(form, text="🙈", width=3, command=toggle_show)
     eye_btn.grid(row=1, column=2, padx=(8, 0))
@@ -157,6 +229,40 @@ def main_menu():
 
     ttk.Label(menu, text="MAIN MENU", font=FONT_TITLE).pack(pady=20)
 
+    
+    status_frame = ttk.Frame(menu)
+    status_frame.pack(pady=(0, 6))
+    serial_status_var = tk.StringVar()
+    if is_serial_connected():
+        serial_status_var.set("Serial: Connected")
+    else:
+        serial_status_var.set("Serial: Disconnected")
+    serial_label = ttk.Label(status_frame, textvariable=serial_status_var, font=("Segoe UI", 10))
+    serial_label.pack(side=tk.LEFT, padx=(0, 12))
+
+    def toggle_serial():
+ 
+        if is_serial_connected():
+            close_serial()
+            serial_status_var.set("Serial: Disconnected")
+            toggle_btn.config(text="Connect")
+        else:
+            
+            port = auto_detect_serial() or COM
+            ok = init_serial(port=port)
+            if ok:
+                serial_status_var.set(f"Serial: Connected ({port})")
+                toggle_btn.config(text="Disconnect")
+            else:
+                messagebox.showwarning("Serial", f"Could not connect to serial port: {port}")
+
+    if is_serial_connected():
+        btn_text = "Disconnect"
+    else:
+        btn_text = "Connect"
+    toggle_btn = ttk.Button(status_frame, text=btn_text, command=toggle_serial, width=10)
+    toggle_btn.pack(side=tk.LEFT)
+
     def open_tms():
         menu.destroy()
         traffic_light_control()
@@ -164,14 +270,24 @@ def main_menu():
     btn_frame = ttk.Frame(menu)
     btn_frame.pack(pady=10)
 
-    menu_buttons = [
-        ("TMS APPLICATION", open_tms),
-        ("HUMIDITY & TEMPERATURE", lambda: humidity_temperature_window()),
-        ("LOCK / UNLOCK SYSTEM", lambda: lock_window()),
-        ("ITEM DETECTOR SYSTEM", lambda: item_detector_window()),
-        ("DISTANCE MEASURE SYSTEM", lambda: distance_window()),
-        ("OTHER", lambda: other_window())
-    ]
+    
+    menu_buttons = []
+    menu_buttons.append(("TMS APPLICATION", open_tms))
+    def open_humidity():
+        humidity_temperature_window()
+    menu_buttons.append(("HUMIDITY & TEMPERATURE", open_humidity))
+    def open_lock():
+        lock_window()
+    menu_buttons.append(("LOCK / UNLOCK SYSTEM", open_lock))
+    def open_item_detector():
+        item_detector_window()
+    menu_buttons.append(("ITEM DETECTOR SYSTEM", open_item_detector))
+    def open_distance():
+        distance_window()
+    menu_buttons.append(("DISTANCE MEASURE SYSTEM", open_distance))
+    def open_other():
+        other_window()
+    menu_buttons.append(("OTHER", open_other))
 
     for idx, (text, cmd) in enumerate(menu_buttons):
         row = idx // 2
@@ -198,6 +314,7 @@ def traffic_light_control():
     app.configure(bg=BG_COLOR)
     apply_dark_theme(app)
 
+   
     current_phase = {"state": "OFF", "time_left": 0}
     cycle_running = {"active": False}
     timer_job = {"job": None}
@@ -263,6 +380,7 @@ def traffic_light_control():
 
 
     def update_timer():
+       
         if not cycle_running["active"]:
             if current_phase["time_left"] > 0:
                 current_phase["time_left"] -= 1
@@ -288,6 +406,7 @@ def traffic_light_control():
             current_phase["time_left"] = 15
             status_label.config(text="LIGHT: GO")
             timer_label.config(text="TIMER: 15")
+            
             send_command("G")
             set_light("GO")
             update_timer()
@@ -301,6 +420,7 @@ def traffic_light_control():
         current_phase["time_left"] = 0
         status_label.config(text="LIGHT: OFF")
         timer_label.config(text="TIMER: 0")
+       
         send_command("C")
         set_light("OFF")
 
@@ -312,6 +432,7 @@ def traffic_light_control():
             current_phase["time_left"] = 5
             status_label.config(text="LIGHT: CAUTION")
             timer_label.config(text="TIMER: 5")
+            # Y = yellow / caution
             send_command("Y")
             set_light("CAUTION")
         elif current_phase["state"] == "CAUTION":
@@ -319,6 +440,7 @@ def traffic_light_control():
             current_phase["time_left"] = 15
             status_label.config(text="LIGHT: STOP")
             timer_label.config(text="TIMER: 15")
+            # R = red / stop
             send_command("R")
             set_light("STOP")
         elif current_phase["state"] == "STOP":
@@ -388,41 +510,49 @@ def humidity_temperature_window():
 
     ttk.Label(win, text="Humidity & Temperature", font=("Segoe UI", 14, "bold")).pack(pady=10)
 
-    # Top canvas area for gauges
+    
     gauge_frame = ttk.Frame(win)
     gauge_frame.pack(pady=6, padx=8, fill="x")
 
     canvas = tk.Canvas(gauge_frame, width=520, height=200, bg=BG_COLOR, highlightthickness=0)
     canvas.pack()
 
-    # Temperature gauge (left) - semicircle gauge
+    
     t_cx, t_cy, t_r = 140, 110, 80
     canvas.create_oval(t_cx - t_r, t_cy - t_r, t_cx + t_r, t_cy + t_r, fill="#222222", outline="#3a3a3a", width=2)
-    # static ticks/labels
+   
+    if hasattr(tk, 'math'):
+        _cos = tk.math.cos
+        _sin = tk.math.sin
+    else:
+        import math
+        _cos = math.cos
+        _sin = math.sin
+
     for i in range(0, 11):
         angle = 180 + (i * 18)  # 180..360
         rad = angle * 3.14159 / 180
-        x1 = t_cx + (t_r - 8) * tk.math.cos(rad) if hasattr(tk, 'math') else t_cx + (t_r - 8) * __import__('math').cos(rad)
-        y1 = t_cy + (t_r - 8) * tk.math.sin(rad) if hasattr(tk, 'math') else t_cy + (t_r - 8) * __import__('math').sin(rad)
-        x2 = t_cx + (t_r - 2) * (__import__('math').cos(rad))
-        y2 = t_cy + (t_r - 2) * (__import__('math').sin(rad))
+        x1 = t_cx + (t_r - 8) * _cos(rad)
+        y1 = t_cy + (t_r - 8) * _sin(rad)
+        x2 = t_cx + (t_r - 2) * (_cos(rad))
+        y2 = t_cy + (t_r - 2) * (_sin(rad))
         canvas.create_line(x1, y1, x2, y2, fill="#555555")
 
-    # Arc that will represent current temperature (start at 180, extent variable)
+  
     temp_arc = canvas.create_arc(t_cx - t_r, t_cy - t_r, t_cx + t_r, t_cy + t_r, start=180, extent=0, style='arc', outline='#ff6b6b', width=12)
     temp_text = canvas.create_text(t_cx, t_cy + 30, text="-- °C", fill=FG_COLOR, font=("Segoe UI", 12, "bold"))
     canvas.create_text(t_cx, t_cy - t_r - 10, text="Temperature", fill="#bfc7d6", font=("Segoe UI", 10))
 
-    # Humidity bar (right)
+
     h_x, h_y = 340, 40
     h_w, h_h = 160, 160
     canvas.create_rectangle(h_x, h_y, h_x + h_w, h_y + h_h, outline="#3a3a3a", fill="#222222", width=2)
-    # background for fill
+    
     humid_fill = canvas.create_rectangle(h_x + 6, h_y + 6 + h_h, h_x + h_w - 6, h_y + h_h - 6, outline="", fill="#00bcd4")
     humid_text = canvas.create_text(h_x + h_w / 2, h_y + h_h + 18, text="-- %", fill=FG_COLOR, font=("Segoe UI", 12, "bold"))
     canvas.create_text(h_x + h_w / 2, h_y - 10, text="Humidity", fill="#bfc7d6", font=("Segoe UI", 10))
 
-    # Table-like frame for stats (min/max)
+    
     stats_frame = ttk.Frame(win)
     stats_frame.pack(pady=8)
 
@@ -456,6 +586,7 @@ def humidity_temperature_window():
     }
 
     def update_stats(temp, humid):
+        # Maintain per-window min/max stats for display. `None` values are ignored.
         if temp is not None:
             if stats["temp_high"] is None or temp > stats["temp_high"]:
                 stats["temp_high"] = temp
@@ -468,7 +599,7 @@ def humidity_temperature_window():
                 stats["humid_low"] = humid
 
     def parse_arduino_line(line):
-        # Expects: "Humidity: 55.00 %\tTemperature: 28.00 °C"
+       
         try:
             parts = line.strip().split()
             hidx = parts.index("Humidity:")
@@ -479,7 +610,7 @@ def humidity_temperature_window():
         except Exception:
             return None, None
 
-    # store references to canvas items so we can update them
+    
     widgets = {
         'canvas': canvas,
         'temp_arc': temp_arc,
@@ -488,18 +619,44 @@ def humidity_temperature_window():
         'humid_text': humid_text
     }
 
-    # sensible ranges for visualization
+   
     MIN_TEMP, MAX_TEMP = 0.0, 50.0
     MIN_HUM, MAX_HUM = 0.0, 100.0
 
     def fetch_and_update():
+      
         try:
-            arduino.reset_input_buffer()
-            send_command('R')
-            # give Arduino a short time to respond
-            win.after(150)
-            line = arduino.readline().decode(errors="ignore").strip()
-            temp, humid = parse_arduino_line(line)
+            if is_serial_connected():
+                try:
+                    # ask for reading (non-blocking) and read response
+                    try:
+                        arduino.reset_input_buffer()
+                    except Exception:
+                        pass
+                    send_command('R')
+                    # give Arduino a short time to respond
+                    win.update_idletasks()
+                    win.after(150)
+                    line = b""
+                    try:
+                        line = arduino.readline()
+                        if isinstance(line, bytes):
+                            line = line.decode(errors="ignore").strip()
+                        else:
+                            line = str(line).strip()
+                    except Exception:
+                        line = ""
+                    temp, humid = parse_arduino_line(line)
+                except Exception:
+                    temp, humid = None, None
+            else:
+              
+                import random, time
+                t = time.time()
+         
+                temp = 25.0 + 4.0 * __import__('math').sin(t / 10.0) + random.uniform(-0.5, 0.5)
+                humid = 55.0 + 8.0 * __import__('math').cos(t / 12.0) + random.uniform(-1.0, 1.0)
+
             if temp is not None and humid is not None:
                 # update numeric labels
                 temp_cur.config(text=f"{temp:.2f}")
@@ -510,7 +667,7 @@ def humidity_temperature_window():
                 humid_high.config(text=f"{stats['humid_high']:.2f}")
                 humid_low.config(text=f"{stats['humid_low']:.2f}")
 
-                # update temperature arc (map temp to 0..180 degrees)
+                # update temperature arc (map temp to 0..180 degrees).
                 pct_t = (temp - MIN_TEMP) / (MAX_TEMP - MIN_TEMP)
                 pct_t = max(0.0, min(1.0, pct_t))
                 extent = int(180 * pct_t)
@@ -528,12 +685,15 @@ def humidity_temperature_window():
                 canvas.coords(widgets['humid_fill'], x1, y_top, x2, y_bottom)
                 canvas.itemconfig(widgets['humid_text'], text=f"{humid:.1f} %")
 
-                print(f"[Realtime] Temp: {temp:.2f} °C   Humid: {humid:.2f} %")
+                if is_serial_connected():
+                    print(f"[Realtime] Temp: {temp:.2f} °C   Humid: {humid:.2f} %")
+                else:
+                    print(f"[Simulate] Temp: {temp:.2f} °C   Humid: {humid:.2f} %")
             else:
                 temp_cur.config(text="--")
                 humid_cur.config(text="--")
         except Exception:
-            # don't raise for serial/hardware issues; show placeholders
+            # don't raise for GUI/serial issues; show placeholders
             temp_cur.config(text="--")
             humid_cur.config(text="--")
 
