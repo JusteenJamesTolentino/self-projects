@@ -1,0 +1,19 @@
+{"temperature": 24.665518259432666, "humidity": 54.62101576882074, "sim": true, "kind": "env", "ts": 1759635715.8005686}
+{"event": "new_high_temp", "temperature": 24.665518259432666, "humidity": 54.62101576882074, "sim": true, "kind": "env_extreme", "ts": 1759635715.801095}
+{"event": "new_low_temp", "temperature": 24.665518259432666, "humidity": 54.62101576882074, "sim": true, "kind": "env_extreme", "ts": 1759635715.8012848}
+{"event": "new_high_humid", "temperature": 24.665518259432666, "humidity": 54.62101576882074, "sim": true, "kind": "env_extreme", "ts": 1759635715.801445}
+{"event": "new_low_humid", "temperature": 24.665518259432666, "humidity": 54.62101576882074, "sim": true, "kind": "env_extreme", "ts": 1759635715.8015997}
+{"temperature": 25.10880460615144, "humidity": 53.85332749253753, "sim": true, "kind": "env", "ts": 1759635716.8047926}
+{"event": "new_high_temp", "temperature": 25.10880460615144, "humidity": 53.85332749253753, "sim": true, "kind": "env_extreme", "ts": 1759635716.8051326}
+{"event": "new_low_humid", "temperature": 25.10880460615144, "humidity": 53.85332749253753, "sim": true, "kind": "env_extreme", "ts": 1759635716.8059106}
+{"temperature": 25.525515386884063, "humidity": 53.43250050942419, "sim": true, "kind": "env", "ts": 1759635717.8069105}
+{"event": "new_high_temp", "temperature": 25.525515386884063, "humidity": 53.43250050942419, "sim": true, "kind": "env_extreme", "ts": 1759635717.807167}
+{"event": "new_low_humid", "temperature": 25.525515386884063, "humidity": 53.43250050942419, "sim": true, "kind": "env_extreme", "ts": 1759635717.8072953}
+{"temperature": 25.572864658987708, "humidity": 52.778717046166975, "sim": true, "kind": "env", "ts": 1759635718.808087}
+{"event": "new_high_temp", "temperature": 25.572864658987708, "humidity": 52.778717046166975, "sim": true, "kind": "env_extreme", "ts": 1759635718.8083081}
+{"event": "new_low_humid", "temperature": 25.572864658987708, "humidity": 52.778717046166975, "sim": true, "kind": "env_extreme", "ts": 1759635718.8084183}
+{"temperature": 25.485896590627945, "humidity": 52.27347035653791, "sim": true, "kind": "env", "ts": 1759635719.809174}
+{"event": "new_low_humid", "temperature": 25.485896590627945, "humidity": 52.27347035653791, "sim": true, "kind": "env_extreme", "ts": 1759635719.8093655}
+{"temperature": 25.58641016691607, "humidity": 51.984615640631205, "sim": true, "kind": "env", "ts": 1759635720.8104196}
+{"event": "new_high_temp", "temperature": 25.58641016691607, "humidity": 51.984615640631205, "sim": true, "kind": "env_extreme", "ts": 1759635720.8107245}
+{"event": "new_low_humid", "temperature": 25.58641016691607, "humidity": 51.984615640631205, "sim": true, "kind": "env_extreme", "ts": 1759635720.81086}

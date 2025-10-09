@@ -1,22 +1,40 @@
-
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
+import sys
+import time
+import os
+import json
 
 try:
-   
+    from data_logger import log_reading, load_entries, compute_stats, clear_log, export_csv
+except Exception:
+    # Fallback no-op implementations if logger import fails
+    def log_reading(kind, data):
+        pass
+    def load_entries(limit=None):
+        return []
+    def compute_stats(entries):
+        return {"count": 0}
+    def clear_log():
+        return False
+    def export_csv(dest):
+        return False
+
+try:
+
     import serial
     from serial.tools import list_ports
+
 except Exception:
+    messagebox.showerror("Error", "Failed to import serial libraries.")
     serial = None
     list_ports = None
-import tkinter as tk
-from tkinter import ttk, messagebox
 
 BG_COLOR = "#1e1e1e"
 FG_COLOR = "#ffffff"
 BTN_COLOR = "#007acc"
 FONT_MAIN = ("Segoe UI", 12)
 FONT_TITLE = ("Segoe UI", 16, "bold")
-
-COM = "/dev/ttyUSB1"
 arduino = None
 
 
@@ -24,15 +42,60 @@ def auto_detect_serial():
     if list_ports is None:
         return None
     ports = list_ports.comports()
-    pref = None
+    if not ports:
+        return None
+
+    plat = sys.platform.lower()
+
+    def score(p):
+        dev = getattr(p, 'device', '') or ''
+        desc = (getattr(p, 'description', '') or '').lower()
+        mfg = (getattr(p, 'manufacturer', '') or '').lower()
+        pr = 100
+        # Manufacturer/description hints
+        if 'arduino' in desc or 'arduino' in mfg or 'genuino' in desc or 'genuino' in mfg:
+            pr -= 20
+        if 'ch340' in desc or 'wch' in desc or 'wch' in mfg or 'cp210' in desc or 'ftdi' in desc:
+            pr -= 5
+
+        if plat.startswith('linux'):
+            if '/dev/ttyusb' in dev:
+                pr = min(pr, 1)
+            elif '/dev/ttyacm' in dev:
+                pr = min(pr, 2)
+            elif '/dev/tty' in dev:
+                pr = min(pr, 50)
+        elif plat.startswith('darwin'):
+            if '/dev/tty.usbmodem' in dev:
+                pr = min(pr, 1)
+            elif '/dev/tty.usbserial' in dev:
+                pr = min(pr, 2)
+            elif '/dev/cu.' in dev:
+                pr = min(pr, 20)
+        elif plat.startswith('win'):
+            if dev.upper().startswith('COM'):
+                pr = min(pr, 10)
+        else:
+            # Unknown platform: prefer anything with tty/usb
+            if 'usb' in dev.lower():
+                pr = min(pr, 10)
+
+        # Prefer ports with a valid VID/PID as a slight hint they are real USB serial
+        vid = getattr(p, 'vid', None)
+        pid = getattr(p, 'pid', None)
+        if vid is not None and pid is not None:
+            pr -= 2
+
+        return pr
+
+    best = None
+    best_score = None
     for p in ports:
-        if '/dev/ttyUSB' in p.device:
-            return p.device
-        if '/dev/ttyACM' in p.device and pref is None:
-            pref = p.device
-    if ports:
-        return ports[0].device
-    return pref
+        s = score(p)
+        if best is None or s < best_score:
+            best = p
+            best_score = s
+    return best.device if best else None
 
 
 def init_serial(port=None, baudrate=9600, timeout=1):
@@ -241,20 +304,25 @@ def main_menu():
     serial_label.pack(side=tk.LEFT, padx=(0, 12))
 
     def toggle_serial():
- 
         if is_serial_connected():
             close_serial()
             serial_status_var.set("Serial: Disconnected")
             toggle_btn.config(text="Connect")
         else:
-            
-            port = auto_detect_serial() or COM
-            ok = init_serial(port=port)
+            ok = init_serial(port=None)
             if ok:
-                serial_status_var.set(f"Serial: Connected ({port})")
+                detected = getattr(arduino, 'port', None)
+                if detected:
+                    serial_status_var.set(f"Serial: Connected ({detected})")
+                else:
+                    serial_status_var.set("Serial: Connected")
                 toggle_btn.config(text="Disconnect")
             else:
-                messagebox.showwarning("Serial", f"Could not connect to serial port: {port}")
+                candidate = auto_detect_serial()
+                if candidate:
+                    messagebox.showwarning("Serial", f"Could not connect to serial port: {candidate}")
+                else:
+                    messagebox.showwarning("Serial", "No serial ports found on this system.")
 
     if is_serial_connected():
         btn_text = "Disconnect"
@@ -288,6 +356,9 @@ def main_menu():
     def open_other():
         other_window()
     menu_buttons.append(("OTHER", open_other))
+    def open_analytics():
+        analytics_window()
+    menu_buttons.append(("ANALYTICS", open_analytics))
 
     for idx, (text, cmd) in enumerate(menu_buttons):
         row = idx // 2
@@ -318,6 +389,7 @@ def traffic_light_control():
     current_phase = {"state": "OFF", "time_left": 0}
     cycle_running = {"active": False}
     timer_job = {"job": None}
+    cycle_counter = {"id": 0}
 
     def back_to_menu():
         try:
@@ -377,6 +449,11 @@ def traffic_light_control():
             light_canvas.itemconfig(green_circle, fill="#003d00")
             light_canvas.itemconfig(yellow_circle, fill="#4b2f00")
             light_canvas.itemconfig(red_circle, fill="#4b0000")
+        try:
+            if phase in ("GO", "CAUTION", "STOP"):
+                log_reading("traffic", {"event": "phase_visual", "phase": phase, "cycle_id": cycle_counter["id"]})
+        except Exception:
+            pass
 
 
     def update_timer():
@@ -402,13 +479,17 @@ def traffic_light_control():
     def start_traffic_cycle():
         if not cycle_running["active"]:
             cycle_running["active"] = True
+            cycle_counter["id"] += 1
             current_phase["state"] = "GO"
             current_phase["time_left"] = 15
             status_label.config(text="LIGHT: GO")
             timer_label.config(text="TIMER: 15")
-            
             send_command("G")
             set_light("GO")
+            try:
+                log_reading("traffic", {"event": "start_cycle", "phase": "GO", "cycle_id": cycle_counter["id"]})
+            except Exception:
+                pass
             update_timer()
 
     def stop_traffic_cycle():
@@ -423,6 +504,10 @@ def traffic_light_control():
        
         send_command("C")
         set_light("OFF")
+        try:
+            log_reading("traffic", {"event": "stop_cycle", "cycle_id": cycle_counter["id"]})
+        except Exception:
+            pass
 
     def next_phase():
         if not cycle_running["active"]:
@@ -435,6 +520,10 @@ def traffic_light_control():
             # Y = yellow / caution
             send_command("Y")
             set_light("CAUTION")
+            try:
+                log_reading("traffic", {"event": "phase", "phase": "CAUTION", "cycle_id": cycle_counter["id"]})
+            except Exception:
+                pass
         elif current_phase["state"] == "CAUTION":
             current_phase["state"] = "STOP"
             current_phase["time_left"] = 15
@@ -443,6 +532,10 @@ def traffic_light_control():
             # R = red / stop
             send_command("R")
             set_light("STOP")
+            try:
+                log_reading("traffic", {"event": "phase", "phase": "STOP", "cycle_id": cycle_counter["id"]})
+            except Exception:
+                pass
         elif current_phase["state"] == "STOP":
             current_phase["state"] = "GO"
             current_phase["time_left"] = 15
@@ -450,6 +543,10 @@ def traffic_light_control():
             timer_label.config(text="TIMER: 15")
             send_command("G")
             set_light("GO")
+            try:
+                log_reading("traffic", {"event": "phase", "phase": "GO", "cycle_id": cycle_counter["id"]})
+            except Exception:
+                pass
         update_timer()
 
     def go_button():
@@ -460,6 +557,10 @@ def traffic_light_control():
         timer_label.config(text="TIMER: 15")
         send_command("G")
         set_light("GO")
+        try:
+            log_reading("traffic", {"event": "manual", "phase": "GO", "cycle_id": cycle_counter["id"]})
+        except Exception:
+            pass
         update_timer()
 
     def caution_button():
@@ -470,6 +571,10 @@ def traffic_light_control():
         timer_label.config(text="TIMER: 5")
         send_command("Y")
         set_light("CAUTION")
+        try:
+            log_reading("traffic", {"event": "manual", "phase": "CAUTION", "cycle_id": cycle_counter["id"]})
+        except Exception:
+            pass
         update_timer()
 
     def stop_button():
@@ -480,6 +585,10 @@ def traffic_light_control():
         timer_label.config(text="TIMER: 15")
         send_command("R")
         set_light("STOP")
+        try:
+            log_reading("traffic", {"event": "manual", "phase": "STOP", "cycle_id": cycle_counter["id"]})
+        except Exception:
+            pass
         update_timer()
 
     control_frame = ttk.Frame(app)
@@ -510,17 +619,15 @@ def humidity_temperature_window():
 
     ttk.Label(win, text="Humidity & Temperature", font=("Segoe UI", 14, "bold")).pack(pady=10)
 
-    
     gauge_frame = ttk.Frame(win)
     gauge_frame.pack(pady=6, padx=8, fill="x")
 
     canvas = tk.Canvas(gauge_frame, width=520, height=200, bg=BG_COLOR, highlightthickness=0)
     canvas.pack()
 
-    
     t_cx, t_cy, t_r = 140, 110, 80
     canvas.create_oval(t_cx - t_r, t_cy - t_r, t_cx + t_r, t_cy + t_r, fill="#222222", outline="#3a3a3a", width=2)
-   
+
     if hasattr(tk, 'math'):
         _cos = tk.math.cos
         _sin = tk.math.sin
@@ -530,76 +637,62 @@ def humidity_temperature_window():
         _sin = math.sin
 
     for i in range(0, 11):
-        angle = 180 + (i * 18)  # 180..360
+        angle = 180 + (i * 18)
         rad = angle * 3.14159 / 180
         x1 = t_cx + (t_r - 8) * _cos(rad)
         y1 = t_cy + (t_r - 8) * _sin(rad)
-        x2 = t_cx + (t_r - 2) * (_cos(rad))
-        y2 = t_cy + (t_r - 2) * (_sin(rad))
+        x2 = t_cx + (t_r - 2) * _cos(rad)
+        y2 = t_cy + (t_r - 2) * _sin(rad)
         canvas.create_line(x1, y1, x2, y2, fill="#555555")
 
-  
     temp_arc = canvas.create_arc(t_cx - t_r, t_cy - t_r, t_cx + t_r, t_cy + t_r, start=180, extent=0, style='arc', outline='#ff6b6b', width=12)
     temp_text = canvas.create_text(t_cx, t_cy + 30, text="-- °C", fill=FG_COLOR, font=("Segoe UI", 12, "bold"))
     canvas.create_text(t_cx, t_cy - t_r - 10, text="Temperature", fill="#bfc7d6", font=("Segoe UI", 10))
 
-
     h_x, h_y = 340, 40
     h_w, h_h = 160, 160
     canvas.create_rectangle(h_x, h_y, h_x + h_w, h_y + h_h, outline="#3a3a3a", fill="#222222", width=2)
-    
     humid_fill = canvas.create_rectangle(h_x + 6, h_y + 6 + h_h, h_x + h_w - 6, h_y + h_h - 6, outline="", fill="#00bcd4")
     humid_text = canvas.create_text(h_x + h_w / 2, h_y + h_h + 18, text="-- %", fill=FG_COLOR, font=("Segoe UI", 12, "bold"))
     canvas.create_text(h_x + h_w / 2, h_y - 10, text="Humidity", fill="#bfc7d6", font=("Segoe UI", 10))
 
-    
     stats_frame = ttk.Frame(win)
     stats_frame.pack(pady=8)
-
     ttk.Label(stats_frame, text="", width=12).grid(row=0, column=0)
     ttk.Label(stats_frame, text="Current", width=12).grid(row=0, column=1)
     ttk.Label(stats_frame, text="Highest", width=12).grid(row=0, column=2)
     ttk.Label(stats_frame, text="Lowest", width=12).grid(row=0, column=3)
-
     ttk.Label(stats_frame, text="Temp (°C)", width=12).grid(row=1, column=0)
-    temp_cur = ttk.Label(stats_frame, text="--", width=12)
-    temp_cur.grid(row=1, column=1)
-    temp_high = ttk.Label(stats_frame, text="--", width=12)
-    temp_high.grid(row=1, column=2)
-    temp_low = ttk.Label(stats_frame, text="--", width=12)
-    temp_low.grid(row=1, column=3)
-
+    temp_cur = ttk.Label(stats_frame, text="--", width=12); temp_cur.grid(row=1, column=1)
+    temp_high = ttk.Label(stats_frame, text="--", width=12); temp_high.grid(row=1, column=2)
+    temp_low = ttk.Label(stats_frame, text="--", width=12); temp_low.grid(row=1, column=3)
     ttk.Label(stats_frame, text="Humid (%)", width=12).grid(row=2, column=0)
-    humid_cur = ttk.Label(stats_frame, text="--", width=12)
-    humid_cur.grid(row=2, column=1)
-    humid_high = ttk.Label(stats_frame, text="--", width=12)
-    humid_high.grid(row=2, column=2)
-    humid_low = ttk.Label(stats_frame, text="--", width=12)
-    humid_low.grid(row=2, column=3)
+    humid_cur = ttk.Label(stats_frame, text="--", width=12); humid_cur.grid(row=2, column=1)
+    humid_high = ttk.Label(stats_frame, text="--", width=12); humid_high.grid(row=2, column=2)
+    humid_low = ttk.Label(stats_frame, text="--", width=12); humid_low.grid(row=2, column=3)
 
-    # State for min/max
-    stats = {
-        "temp_high": None,
-        "temp_low": None,
-        "humid_high": None,
-        "humid_low": None
-    }
+    stats = {"temp_high": None, "temp_low": None, "humid_high": None, "humid_low": None}
+    simulation = {"active": False, "temp": 25.0, "humid": 55.0}
 
-    def update_stats(temp, humid):
-        # Maintain per-window min/max stats for display. `None` values are ignored.
-        if temp is not None:
-            if stats["temp_high"] is None or temp > stats["temp_high"]:
-                stats["temp_high"] = temp
-            if stats["temp_low"] is None or temp < stats["temp_low"]:
-                stats["temp_low"] = temp
-        if humid is not None:
-            if stats["humid_high"] is None or humid > stats["humid_high"]:
-                stats["humid_high"] = humid
-            if stats["humid_low"] is None or humid < stats["humid_low"]:
-                stats["humid_low"] = humid
+    def update_stats(temp_val, humid_val):
+        events = []
+        if temp_val is not None:
+            if stats["temp_high"] is None or temp_val > stats["temp_high"]:
+                stats["temp_high"] = temp_val
+                events.append("new_high_temp")
+            if stats["temp_low"] is None or temp_val < stats["temp_low"]:
+                stats["temp_low"] = temp_val
+                events.append("new_low_temp")
+        if humid_val is not None:
+            if stats["humid_high"] is None or humid_val > stats["humid_high"]:
+                stats["humid_high"] = humid_val
+                events.append("new_high_humid")
+            if stats["humid_low"] is None or humid_val < stats["humid_low"]:
+                stats["humid_low"] = humid_val
+                events.append("new_low_humid")
+        return events
 
     def parse_arduino_line(line):
-       
         try:
             parts = line.strip().split()
             hidx = parts.index("Humidity:")
@@ -610,31 +703,36 @@ def humidity_temperature_window():
         except Exception:
             return None, None
 
-    
-    widgets = {
-        'canvas': canvas,
-        'temp_arc': temp_arc,
-        'temp_text': temp_text,
-        'humid_fill': humid_fill,
-        'humid_text': humid_text
-    }
-
-   
+    widgets = { 'temp_arc': temp_arc, 'temp_text': temp_text, 'humid_fill': humid_fill, 'humid_text': humid_text }
     MIN_TEMP, MAX_TEMP = 0.0, 50.0
     MIN_HUM, MAX_HUM = 0.0, 100.0
 
     def fetch_and_update():
-      
         try:
-            if is_serial_connected():
+            # If user connects serial while simulating, auto-stop simulation
+            if simulation["active"] and is_serial_connected():
+                simulation["active"] = False
                 try:
-                    # ask for reading (non-blocking) and read response
+                    sim_btn.config(text="Start Simulation")
+                except Exception:
+                    pass
+
+            if simulation["active"] and not is_serial_connected():
+                import random
+                # Random walk with gentle drift
+                simulation["temp"] += random.uniform(-0.35, 0.45)
+                simulation["humid"] += random.uniform(-0.9, 1.0)
+                # Clamp ranges
+                simulation["temp"] = max(MIN_TEMP, min(MAX_TEMP, simulation["temp"]))
+                simulation["humid"] = max(MIN_HUM, min(MAX_HUM, simulation["humid"]))
+                temp, humid = simulation["temp"], simulation["humid"]
+            elif is_serial_connected():
+                try:
                     try:
                         arduino.reset_input_buffer()
                     except Exception:
                         pass
                     send_command('R')
-                    # give Arduino a short time to respond
                     win.update_idletasks()
                     win.after(150)
                     line = b""
@@ -650,61 +748,61 @@ def humidity_temperature_window():
                 except Exception:
                     temp, humid = None, None
             else:
-              
-                import random, time
-                t = time.time()
-         
-                temp = 25.0 + 4.0 * __import__('math').sin(t / 10.0) + random.uniform(-0.5, 0.5)
-                humid = 55.0 + 8.0 * __import__('math').cos(t / 12.0) + random.uniform(-1.0, 1.0)
-
+                temp = None; humid = None
             if temp is not None and humid is not None:
-                # update numeric labels
                 temp_cur.config(text=f"{temp:.2f}")
                 humid_cur.config(text=f"{humid:.2f}")
-                update_stats(temp, humid)
+                extreme_events = update_stats(temp, humid)
                 temp_high.config(text=f"{stats['temp_high']:.2f}")
                 temp_low.config(text=f"{stats['temp_low']:.2f}")
                 humid_high.config(text=f"{stats['humid_high']:.2f}")
                 humid_low.config(text=f"{stats['humid_low']:.2f}")
-
-                # update temperature arc (map temp to 0..180 degrees).
-                pct_t = (temp - MIN_TEMP) / (MAX_TEMP - MIN_TEMP)
-                pct_t = max(0.0, min(1.0, pct_t))
+                pct_t = max(0.0, min(1.0, (temp - MIN_TEMP)/(MAX_TEMP-MIN_TEMP)))
                 extent = int(180 * pct_t)
                 canvas.itemconfig(widgets['temp_arc'], extent=extent)
                 canvas.itemconfig(widgets['temp_text'], text=f"{temp:.1f} °C")
-
-                # update humidity fill (map humid to height)
-                pct_h = (humid - MIN_HUM) / (MAX_HUM - MIN_HUM)
-                pct_h = max(0.0, min(1.0, pct_h))
-                # compute fill rectangle coords
-                x1 = h_x + 6
-                x2 = h_x + h_w - 6
+                pct_h = max(0.0, min(1.0, (humid - MIN_HUM)/(MAX_HUM-MIN_HUM)))
+                x1 = h_x + 6; x2 = h_x + h_w - 6
                 y_bottom = h_y + h_h - 6
                 y_top = h_y + 6 + (1 - pct_h) * (h_h - 12)
                 canvas.coords(widgets['humid_fill'], x1, y_top, x2, y_bottom)
                 canvas.itemconfig(widgets['humid_text'], text=f"{humid:.1f} %")
-
-                if is_serial_connected():
-                    print(f"[Realtime] Temp: {temp:.2f} °C   Humid: {humid:.2f} %")
-                else:
-                    print(f"[Simulate] Temp: {temp:.2f} °C   Humid: {humid:.2f} %")
+                try:
+                    meta = {"temperature": float(temp), "humidity": float(humid)}
+                    if simulation["active"] and not is_serial_connected():
+                        meta["sim"] = True
+                    log_reading("env", meta)
+                    for ev in extreme_events:
+                        ext_meta = {"event": ev, "temperature": float(temp), "humidity": float(humid)}
+                        if simulation["active"] and not is_serial_connected():
+                            ext_meta["sim"] = True
+                        log_reading("env_extreme", ext_meta)
+                except Exception:
+                    pass
             else:
-                temp_cur.config(text="--")
-                humid_cur.config(text="--")
+                temp_cur.config(text="--"); humid_cur.config(text="--")
         except Exception:
-            # don't raise for GUI/serial issues; show placeholders
-            temp_cur.config(text="--")
-            humid_cur.config(text="--")
+            temp_cur.config(text="--"); humid_cur.config(text="--")
 
     def auto_update():
         fetch_and_update()
-        win.after(1000, auto_update)  # 1s interval
+        win.after(1000, auto_update)
 
-    btn_frame = ttk.Frame(win)
-    btn_frame.pack(pady=10)
+    btn_frame = ttk.Frame(win); btn_frame.pack(pady=10)
+
+    def toggle_simulation():
+        if is_serial_connected() and not simulation["active"]:
+            messagebox.showinfo("Simulation", "Disconnect serial to use simulation mode.")
+            return
+        simulation["active"] = not simulation["active"]
+        if simulation["active"]:
+            sim_btn.config(text="Stop Simulation")
+        else:
+            sim_btn.config(text="Start Simulation")
+
+    sim_btn = ttk.Button(btn_frame, text="Start Simulation", command=toggle_simulation)
+    sim_btn.pack(side=tk.LEFT, padx=8)
     ttk.Button(btn_frame, text="Close", command=win.destroy).pack(side=tk.LEFT, padx=8)
-
     auto_update()
 
 
@@ -733,12 +831,138 @@ def item_detector_window():
 def distance_window():
     win = tk.Toplevel()
     win.title("Distance Measure")
-    win.geometry("420x260")
+    win.geometry("460x300")
     win.configure(bg=BG_COLOR)
     apply_dark_theme(win)
+
     ttk.Label(win, text="Distance Measure System", font=("Segoe UI", 14, "bold")).pack(pady=12)
-    ttk.Label(win, text="(Placeholder)").pack(pady=20)
-    ttk.Button(win, text="Close", command=win.destroy).pack(pady=10)
+
+    container = ttk.Frame(win)
+    container.pack(pady=4, padx=10, fill="both", expand=True)
+
+    reading_var = tk.StringVar(value="-- cm")
+    status_var = tk.StringVar(value="Idle")
+
+    reading_label = ttk.Label(container, textvariable=reading_var, font=("Segoe UI", 28, "bold"))
+    reading_label.pack(pady=6)
+    ttk.Label(container, textvariable=status_var, font=("Segoe UI", 10)).pack(pady=(0, 10))
+
+    log_frame = ttk.Frame(container)
+    log_frame.pack(fill="both", expand=True, pady=(4, 6))
+    txt = tk.Text(log_frame, height=6, bg="#222222", fg=FG_COLOR, insertbackground=FG_COLOR, highlightthickness=0, relief=tk.FLAT, wrap="word")
+    txt.pack(side=tk.LEFT, fill="both", expand=True)
+    scroll = ttk.Scrollbar(log_frame, command=txt.yview)
+    scroll.pack(side=tk.RIGHT, fill="y")
+    txt.configure(yscrollcommand=scroll.set)
+
+    controls = ttk.Frame(container)
+    controls.pack(pady=4)
+
+    auto_state = {"running": False, "job": None}
+
+    def parse_distance_line(line):
+        # Expected formats: 'Distance: 123.45 cm' or 'Distance: -1 cm'
+        try:
+            if not line:
+                return None
+            parts = line.strip().split()
+            if len(parts) >= 2 and parts[0] == 'Distance:' and parts[1].replace('.', '', 1).replace('-', '', 1).isdigit():
+                val = float(parts[1])
+                if val < 0:
+                    return None
+                return val
+        except Exception:
+            return None
+        return None
+
+    def append_log(msg):
+        try:
+            txt.insert(tk.END, msg + "\n")
+            txt.see(tk.END)
+        except Exception:
+            pass
+
+    def read_once():
+        if not is_serial_connected():
+            status_var.set("Not connected")
+            append_log("[WARN] Not connected to serial.")
+            return
+        status_var.set("Querying...")
+        try:
+            try:
+                arduino.reset_input_buffer()
+            except Exception:
+                pass
+            send_command('U')
+            # Allow Arduino some time to measure (~60ms throttle already there)
+            win.update_idletasks()
+            win.after(90)
+            line = b""
+            try:
+                line = arduino.readline()
+                if isinstance(line, bytes):
+                    line = line.decode(errors="ignore").strip()
+                else:
+                    line = str(line).strip()
+            except Exception:
+                line = ""
+            dist = parse_distance_line(line)
+            if dist is not None:
+                reading_var.set(f"{dist:.2f} cm")
+                status_var.set("OK")
+                append_log(f"[OK] {dist:.2f} cm")
+                try:
+                    log_reading("distance", {"distance": float(dist)})
+                except Exception:
+                    pass
+            else:
+                status_var.set("No valid reading")
+                append_log(f"[ERR] Invalid line: {line}")
+        except Exception as e:
+            status_var.set("Error")
+            append_log(f"[EXC] {e}")
+
+    def auto_loop():
+        if not auto_state["running"]:
+            return
+        read_once()
+        # schedule next
+        auto_state["job"] = win.after(500, auto_loop)  # 2 Hz
+
+    def toggle_auto():
+        if auto_state["running"]:
+            auto_state["running"] = False
+            btn_auto.config(text="Start Auto")
+            if auto_state["job"]:
+                win.after_cancel(auto_state["job"])
+                auto_state["job"] = None
+            status_var.set("Auto stopped")
+        else:
+            if not is_serial_connected():
+                status_var.set("Not connected")
+                append_log("[WARN] Cannot start auto without serial.")
+                return
+            auto_state["running"] = True
+            btn_auto.config(text="Stop Auto")
+            status_var.set("Auto running")
+            auto_loop()
+
+    btn_read = ttk.Button(controls, text="Read Once", command=read_once, width=14)
+    btn_read.pack(side=tk.LEFT, padx=6)
+    btn_auto = ttk.Button(controls, text="Start Auto", command=toggle_auto, width=14)
+    btn_auto.pack(side=tk.LEFT, padx=6)
+    ttk.Button(controls, text="Close", command=win.destroy, width=10).pack(side=tk.LEFT, padx=6)
+
+    def on_close():
+        auto_state["running"] = False
+        if auto_state["job"]:
+            try:
+                win.after_cancel(auto_state["job"])
+            except Exception:
+                pass
+        win.destroy()
+
+    win.protocol("WM_DELETE_WINDOW", on_close)
 
 
 def other_window():
@@ -750,5 +974,97 @@ def other_window():
     ttk.Label(win, text="Other", font=("Segoe UI", 14, "bold")).pack(pady=12)
     ttk.Label(win, text="(Placeholder)").pack(pady=20)
     ttk.Button(win, text="Close", command=win.destroy).pack(pady=10)
+
+
+def analytics_window():
+    win = tk.Toplevel()
+    win.title("Analytics / Data Log")
+    win.geometry("780x520")
+    win.configure(bg=BG_COLOR)
+    apply_dark_theme(win)
+
+    ttk.Label(win, text="System Analytics", font=("Segoe UI", 14, "bold")).pack(pady=10)
+
+    top_frame = ttk.Frame(win)
+    top_frame.pack(fill="x", padx=8)
+
+    summary_var = tk.StringVar(value="Loading...")
+    ttk.Label(top_frame, textvariable=summary_var, font=("Segoe UI", 10)).pack(anchor="w")
+
+    table_frame = ttk.Frame(win)
+    table_frame.pack(fill="both", expand=True, padx=8, pady=6)
+
+    cols = ("ts", "kind", "temperature", "humidity", "distance")
+    tree = ttk.Treeview(table_frame, columns=cols, show="headings", height=12)
+    for c in cols:
+        tree.heading(c, text=c.upper())
+        tree.column(c, width=120, anchor="center")
+    tree.pack(side=tk.LEFT, fill="both", expand=True)
+    scroll = ttk.Scrollbar(table_frame, command=tree.yview)
+    scroll.pack(side=tk.RIGHT, fill="y")
+    tree.configure(yscrollcommand=scroll.set)
+
+    def human_time(ts):
+        try:
+            return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
+        except Exception:
+            return "?"
+
+    def refresh():
+        entries = load_entries()
+        for i in tree.get_children():
+            tree.delete(i)
+        # Show only latest 300 entries
+        for e in entries[-300:]:
+            tree.insert("", tk.END, values=(
+                human_time(e.get("ts")),
+                e.get("kind"),
+                e.get("temperature", ""),
+                e.get("humidity", ""),
+                e.get("distance", ""),
+            ))
+        stats = compute_stats(entries)
+        if stats.get("count", 0) == 0:
+            summary_var.set("No data yet.")
+            return
+        kinds = ", ".join(f"{k}:{v}" for k, v in stats.get("kinds", {}).items())
+        def fmt_block(name):
+            blk = stats.get(name, {})
+            if blk.get("avg") is None:
+                return f"{name[:4]} -"
+            return f"{name[:4]} min:{blk['min']:.2f} max:{blk['max']:.2f} avg:{blk['avg']:.2f}"
+        summary_var.set(
+            f"Entries: {stats['count']} | Kinds: {kinds} | "
+            f"{fmt_block('temperature')} | {fmt_block('humidity')} | {fmt_block('distance')}"
+        )
+
+    btn_frame = ttk.Frame(win)
+    btn_frame.pack(pady=6)
+
+    def do_export():
+        dest = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV", "*.csv")], title="Export CSV")
+        if not dest:
+            return
+        ok = export_csv(dest)
+        if ok:
+            messagebox.showinfo("Export", f"Exported to {dest}")
+        else:
+            messagebox.showerror("Export", "Failed to export (maybe no data)")
+
+    def do_clear():
+        if not messagebox.askyesno("Confirm", "Clear the entire log? This cannot be undone."):
+            return
+        if clear_log():
+            refresh()
+            messagebox.showinfo("Log", "Log cleared.")
+        else:
+            messagebox.showerror("Log", "Failed to clear log.")
+
+    ttk.Button(btn_frame, text="Refresh", command=refresh, width=12).pack(side=tk.LEFT, padx=6)
+    ttk.Button(btn_frame, text="Export CSV", command=do_export, width=12).pack(side=tk.LEFT, padx=6)
+    ttk.Button(btn_frame, text="Clear Log", command=do_clear, width=12).pack(side=tk.LEFT, padx=6)
+    ttk.Button(btn_frame, text="Close", command=win.destroy, width=12).pack(side=tk.LEFT, padx=6)
+
+    refresh()
 
 login_window()
