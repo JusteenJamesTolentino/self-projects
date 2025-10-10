@@ -12,6 +12,10 @@ DHT dht(DHTPIN, DHTTYPE);
 
 unsigned long lastPing = 0;
 float lastDistance = -1.0;
+// Streaming control for ultrasonic
+bool ultrasonicStreaming = false;
+unsigned long lastUltrasonicStream = 0;
+const unsigned long ULTRASONIC_STREAM_INTERVAL_MS = 100; // 10 Hz
 
 float readDistanceCM() {
   // Trigger a pulse
@@ -114,9 +118,27 @@ void loop() {
           handleUltrasonicSingle();
         }
         break;
+      case 'u': // start ultrasonic streaming
+        ultrasonicStreaming = true;
+        Serial.println("US:STREAM ON");
+        break;
+      case 'S': // stop ultrasonic streaming
+        ultrasonicStreaming = false;
+        Serial.println("US:STREAM OFF");
+        break;
       default:
         // ignore unknown commands
         break;
+    }
+  }
+  // If streaming is enabled, periodically output distance
+  if (ultrasonicStreaming) {
+    unsigned long now = millis();
+    if (now - lastUltrasonicStream >= ULTRASONIC_STREAM_INTERVAL_MS) {
+      lastUltrasonicStream = now;
+      if (canPing()) { // also respect sensor min interval
+        handleUltrasonicSingle();
+      }
     }
   }
   delay(25); // small loop delay to reduce noise

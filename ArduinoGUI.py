@@ -858,19 +858,28 @@ def distance_window():
     controls = ttk.Frame(container)
     controls.pack(pady=4)
 
-    auto_state = {"running": False, "job": None}
+    auto_state = {"running": False, "job": None, "mode": "poll"}  # mode: 'stream' or 'poll'
 
     def parse_distance_line(line):
         # Expected formats: 'Distance: 123.45 cm' or 'Distance: -1 cm'
         try:
             if not line:
                 return None
-            parts = line.strip().split()
-            if len(parts) >= 2 and parts[0] == 'Distance:' and parts[1].replace('.', '', 1).replace('-', '', 1).isdigit():
-                val = float(parts[1])
-                if val < 0:
+            # accept bytes and str
+            if isinstance(line, bytes):
+                try:
+                    line = line.decode(errors="ignore")
+                except Exception:
                     return None
-                return val
+            parts = line.strip().split()
+            # e.g. ["Distance:", "123.45", "cm"] or ["Distance:", "-1", "cm"]
+            if len(parts) >= 2 and parts[0] == 'Distance:':
+                raw = parts[1].replace(',', '')
+                if raw.replace('.', '', 1).replace('-', '', 1).isdigit():
+                    try:
+                        return float(raw)
+                    except Exception:
+                        return None
         except Exception:
             return None
         return None
@@ -894,12 +903,10 @@ def distance_window():
             except Exception:
                 pass
             send_command('U')
-            # Allow Arduino some time to measure (~60ms throttle already there)
-            win.update_idletasks()
-            win.after(90)
+            # Read response line (Arduino responds quickly; try twice if first is empty)
             line = b""
             try:
-                line = arduino.readline()
+                line = arduino.readline() or arduino.readline()
                 if isinstance(line, bytes):
                     line = line.decode(errors="ignore").strip()
                 else:
@@ -908,13 +915,22 @@ def distance_window():
                 line = ""
             dist = parse_distance_line(line)
             if dist is not None:
-                reading_var.set(f"{dist:.2f} cm")
-                status_var.set("OK")
-                append_log(f"[OK] {dist:.2f} cm")
-                try:
-                    log_reading("distance", {"distance": float(dist)})
-                except Exception:
-                    pass
+                if dist < 0:
+                    reading_var.set("Out of range")
+                    status_var.set("OOR")
+                    append_log("[OK] Distance: -1 cm (out of range)")
+                    try:
+                        log_reading("distance", {"distance": -1.0})
+                    except Exception:
+                        pass
+                else:
+                    reading_var.set(f"{dist:.2f} cm")
+                    status_var.set("OK")
+                    append_log(f"[OK] {dist:.2f} cm")
+                    try:
+                        log_reading("distance", {"distance": float(dist)})
+                    except Exception:
+                        pass
             else:
                 status_var.set("No valid reading")
                 append_log(f"[ERR] Invalid line: {line}")
@@ -925,26 +941,124 @@ def distance_window():
     def auto_loop():
         if not auto_state["running"]:
             return
-        read_once()
-        # schedule next
-        auto_state["job"] = win.after(500, auto_loop)  # 2 Hz
+        if not is_serial_connected():
+            status_var.set("Disconnected")
+            append_log("[WARN] Serial disconnected; stopping auto.")
+            auto_state["running"] = False
+            if auto_state["job"]:
+                try:
+                    win.after_cancel(auto_state["job"])
+                except Exception:
+                    pass
+                auto_state["job"] = None
+            # ensure device stops streaming
+            try:
+                send_command('S')
+            except Exception:
+                pass
+            btn_auto.config(text="Start Auto")
+            return
+        if auto_state["mode"] == "poll":
+            read_once()
+            auto_state["job"] = win.after(125, auto_loop)
+        else:
+            # stream mode: read all available lines without blocking
+            try:
+                updated = False
+                # Determine available bytes
+                avail = 0
+                try:
+                    avail = getattr(arduino, 'in_waiting', 0)
+                    if callable(avail):
+                        avail = avail()
+                except Exception:
+                    try:
+                        avail = arduino.inWaiting()
+                    except Exception:
+                        avail = 0
+                # Read lines while buffer has data
+                loop_guard = 0
+                while avail > 0 and loop_guard < 50:  # guard to avoid very long loops
+                    loop_guard += 1
+                    line = arduino.readline()
+                    if not line:
+                        break
+                    if isinstance(line, bytes):
+                        line = line.decode(errors="ignore").strip()
+                    else:
+                        line = str(line).strip()
+                    dist = parse_distance_line(line)
+                    if dist is not None:
+                        updated = True
+                        if dist < 0:
+                            reading_var.set("Out of range")
+                            status_var.set("OOR")
+                            append_log("[OK] Distance: -1 cm (out of range)")
+                            try:
+                                log_reading("distance", {"distance": -1.0})
+                            except Exception:
+                                pass
+                        else:
+                            reading_var.set(f"{dist:.2f} cm")
+                            status_var.set("OK")
+                            append_log(f"[OK] {dist:.2f} cm")
+                            try:
+                                log_reading("distance", {"distance": float(dist)})
+                            except Exception:
+                                pass
+                    # update avail for next iteration
+                    try:
+                        avail = getattr(arduino, 'in_waiting', 0)
+                        if callable(avail):
+                            avail = avail()
+                    except Exception:
+                        try:
+                            avail = arduino.inWaiting()
+                        except Exception:
+                            avail = 0
+                if not updated:
+                    status_var.set("Waiting…")
+            except Exception as e:
+                status_var.set("Stream error")
+                append_log(f"[EXC] {e}")
+            auto_state["job"] = win.after(50, auto_loop)
 
     def toggle_auto():
         if auto_state["running"]:
             auto_state["running"] = False
             btn_auto.config(text="Start Auto")
             if auto_state["job"]:
-                win.after_cancel(auto_state["job"])
+                try:
+                    win.after_cancel(auto_state["job"])
+                except Exception:
+                    pass
                 auto_state["job"] = None
+            # send stop stream if we were streaming
+            if auto_state["mode"] == "stream":
+                try:
+                    send_command('S')
+                except Exception:
+                    pass
             status_var.set("Auto stopped")
         else:
             if not is_serial_connected():
                 status_var.set("Not connected")
                 append_log("[WARN] Cannot start auto without serial.")
                 return
+            # Prefer stream mode; fall back to poll if something fails
+            auto_state["mode"] = "stream"
+            try:
+                try:
+                    arduino.reset_input_buffer()
+                except Exception:
+                    pass
+                send_command('u')  # start streaming on device
+                status_var.set("Streaming…")
+            except Exception:
+                auto_state["mode"] = "poll"
+                status_var.set("Auto (poll)")
             auto_state["running"] = True
             btn_auto.config(text="Stop Auto")
-            status_var.set("Auto running")
             auto_loop()
 
     btn_read = ttk.Button(controls, text="Read Once", command=read_once, width=14)
@@ -960,6 +1074,13 @@ def distance_window():
                 win.after_cancel(auto_state["job"])
             except Exception:
                 pass
+            auto_state["job"] = None
+        # Ensure device stream is stopped
+        try:
+            if is_serial_connected():
+                send_command('S')
+        except Exception:
+            pass
         win.destroy()
 
     win.protocol("WM_DELETE_WINDOW", on_close)
