@@ -815,7 +815,7 @@ def lock_window():
     ttk.Button(win, text="Close", command=win.destroy).pack(pady=10)
 
 
-def item_detector_window():
+def rfid_window():
     win = tk.Toplevel()
     win.title("Item Detector")
     win.geometry("420x260")
