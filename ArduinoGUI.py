@@ -9,12 +9,20 @@ except Exception:
     # Fallback no-op implementations if logger import fails
     def log_reading(kind, data):
         pass
+
+
     def load_entries(limit=None):
         return []
+
+
     def compute_stats(entries):
         return {"count": 0}
+
+
     def clear_log():
         return False
+
+
     def export_csv(dest):
         return False
 
@@ -132,6 +140,7 @@ def close_serial():
 def is_serial_connected():
     return arduino is not None and hasattr(arduino, 'is_open') and arduino.is_open
 
+
 def send_command(command):
     if is_serial_connected():
         try:
@@ -142,9 +151,10 @@ def send_command(command):
     else:
         print(f"[Serial] Not connected, would send: {command}")
 
+
 def apply_dark_theme(root):
     style = ttk.Style(root)
-    style.theme_use("clam")  
+    style.theme_use("clam")
     style.configure("TFrame", background=BG_COLOR)
     style.configure("TLabel", background=BG_COLOR, foreground=FG_COLOR, font=FONT_MAIN)
     style.configure("TButton", background=BTN_COLOR, foreground="white", font=FONT_MAIN, padding=6)
@@ -164,13 +174,14 @@ def draw_rounded_rect(canvas, x1, y1, x2, y2, r=20, **kwargs):
         (x1, y2 - r),
         (x1, y1 + r)
     ]
-   
+
     coords = []
     for p in points:
         for coord in p:
             coords.append(coord)
 
     return canvas.create_polygon(coords, smooth=True, splinesteps=20, **kwargs)
+
 
 def login_window():
     login = tk.Tk()
@@ -184,18 +195,17 @@ def login_window():
 
     canvas_card = tk.Canvas(container, width=360, height=240, bg=BG_COLOR, highlightthickness=0)
     canvas_card.pack(pady=10)
-   
+
     draw_rounded_rect(canvas_card, 6, 6, 354, 234, r=16, fill="#262626", outline="#3a3a3a")
 
     card = ttk.Frame(container, padding=(24, 18), style="Card.TFrame")
-    
+
     card.place(in_=canvas_card, x=12, y=12)
 
-    
     ttk.Label(card, text="GROUP 1", font=("Segoe UI", 18, "bold"), foreground=FG_COLOR, background=BG_COLOR).pack()
-    ttk.Label(card, text="Arduino System — Login", font=("Segoe UI", 10), foreground="#bfc7d6", background=BG_COLOR).pack(pady=(0, 12))
+    ttk.Label(card, text="Arduino System — Login", font=("Segoe UI", 10), foreground="#bfc7d6",
+              background=BG_COLOR).pack(pady=(0, 12))
 
-   
     form = ttk.Frame(card)
     form.pack(pady=(6, 4))
 
@@ -281,6 +291,7 @@ def login_window():
 
     login.mainloop()
 
+
 def main_menu():
     menu = tk.Tk()
     menu.title("Main Menu")
@@ -290,7 +301,6 @@ def main_menu():
 
     ttk.Label(menu, text="MAIN MENU", font=FONT_TITLE).pack(pady=20)
 
-    
     status_frame = ttk.Frame(menu)
     status_frame.pack(pady=(0, 6))
     serial_status_var = tk.StringVar()
@@ -336,26 +346,37 @@ def main_menu():
     btn_frame = ttk.Frame(menu)
     btn_frame.pack(pady=10)
 
-    
     menu_buttons = []
     menu_buttons.append(("TMS APPLICATION", open_tms))
+
     def open_humidity():
         humidity_temperature_window()
+
     menu_buttons.append(("HUMIDITY & TEMPERATURE", open_humidity))
+
     def open_lock():
         lock_window()
-    menu_buttons.append(("LOCK AND UNLOCK SYSTEM", open_lock))
+
+    menu_buttons.append(("LOCK AND UNLOCK", open_lock))
+
     def open_item_detector():
         rfid_window()
+
     menu_buttons.append(("RFID SYSTEM", open_item_detector))
+
     def open_distance():
         distance_window()
+
     menu_buttons.append(("DISTANCE MEASURE SYSTEM", open_distance))
+
     def open_other():
         other_window()
+
     menu_buttons.append(("OTHER", open_other))
+
     def open_analytics():
         analytics_window()
+
     menu_buttons.append(("ANALYTICS", open_analytics))
 
     for idx, (text, cmd) in enumerate(menu_buttons):
@@ -376,6 +397,7 @@ def main_menu():
 
     menu.mainloop()
 
+
 def traffic_light_control():
     app = tk.Tk()
     app.title("Traffic Light Control")
@@ -383,7 +405,6 @@ def traffic_light_control():
     app.configure(bg=BG_COLOR)
     apply_dark_theme(app)
 
-   
     current_phase = {"state": "OFF", "time_left": 0}
     cycle_running = {"active": False}
     timer_job = {"job": None}
@@ -417,7 +438,6 @@ def traffic_light_control():
     light_canvas = tk.Canvas(light_canvas_container, width=320, height=120, bg="#2b2b2b", highlightthickness=0)
     light_canvas.place(x=10, y=10)
 
-
     padding = 20
     radius = 40
     cy = 60
@@ -425,10 +445,12 @@ def traffic_light_control():
     yellow_x = red_x + radius * 2 + 20
     green_x = yellow_x + radius * 2 + 20
 
-    red_circle = light_canvas.create_oval(red_x - radius, cy - radius, red_x + radius, cy + radius, fill="#4b0000", outline="#000000")
-    yellow_circle = light_canvas.create_oval(yellow_x - radius, cy - radius, yellow_x + radius, cy + radius, fill="#4b2f00", outline="#000000")
-    green_circle = light_canvas.create_oval(green_x - radius, cy - radius, green_x + radius, cy + radius, fill="#003d00", outline="#000000")
-
+    red_circle = light_canvas.create_oval(red_x - radius, cy - radius, red_x + radius, cy + radius, fill="#4b0000",
+                                          outline="#000000")
+    yellow_circle = light_canvas.create_oval(yellow_x - radius, cy - radius, yellow_x + radius, cy + radius,
+                                             fill="#4b2f00", outline="#000000")
+    green_circle = light_canvas.create_oval(green_x - radius, cy - radius, green_x + radius, cy + radius,
+                                            fill="#003d00", outline="#000000")
 
     def set_light(phase):
         if phase == "GO":
@@ -453,9 +475,8 @@ def traffic_light_control():
         except Exception:
             pass
 
-
     def update_timer():
-       
+
         if not cycle_running["active"]:
             if current_phase["time_left"] > 0:
                 current_phase["time_left"] -= 1
@@ -499,7 +520,7 @@ def traffic_light_control():
         current_phase["time_left"] = 0
         status_label.config(text="LIGHT: OFF")
         timer_label.config(text="TIMER: 0")
-       
+
         send_command("C")
         set_light("OFF")
         try:
@@ -607,7 +628,6 @@ def traffic_light_control():
     app.mainloop()
 
 
-
 def humidity_temperature_window():
     win = tk.Toplevel()
     win.title("Humidity & Temperature")
@@ -643,15 +663,18 @@ def humidity_temperature_window():
         y2 = t_cy + (t_r - 2) * _sin(rad)
         canvas.create_line(x1, y1, x2, y2, fill="#555555")
 
-    temp_arc = canvas.create_arc(t_cx - t_r, t_cy - t_r, t_cx + t_r, t_cy + t_r, start=180, extent=0, style='arc', outline='#ff6b6b', width=12)
+    temp_arc = canvas.create_arc(t_cx - t_r, t_cy - t_r, t_cx + t_r, t_cy + t_r, start=180, extent=0, style='arc',
+                                 outline='#ff6b6b', width=12)
     temp_text = canvas.create_text(t_cx, t_cy + 30, text="-- °C", fill=FG_COLOR, font=("Segoe UI", 12, "bold"))
     canvas.create_text(t_cx, t_cy - t_r - 10, text="Temperature", fill="#bfc7d6", font=("Segoe UI", 10))
 
     h_x, h_y = 340, 40
     h_w, h_h = 160, 160
     canvas.create_rectangle(h_x, h_y, h_x + h_w, h_y + h_h, outline="#3a3a3a", fill="#222222", width=2)
-    humid_fill = canvas.create_rectangle(h_x + 6, h_y + 6 + h_h, h_x + h_w - 6, h_y + h_h - 6, outline="", fill="#00bcd4")
-    humid_text = canvas.create_text(h_x + h_w / 2, h_y + h_h + 18, text="-- %", fill=FG_COLOR, font=("Segoe UI", 12, "bold"))
+    humid_fill = canvas.create_rectangle(h_x + 6, h_y + 6 + h_h, h_x + h_w - 6, h_y + h_h - 6, outline="",
+                                         fill="#00bcd4")
+    humid_text = canvas.create_text(h_x + h_w / 2, h_y + h_h + 18, text="-- %", fill=FG_COLOR,
+                                    font=("Segoe UI", 12, "bold"))
     canvas.create_text(h_x + h_w / 2, h_y - 10, text="Humidity", fill="#bfc7d6", font=("Segoe UI", 10))
 
     stats_frame = ttk.Frame(win)
@@ -661,13 +684,19 @@ def humidity_temperature_window():
     ttk.Label(stats_frame, text="Highest", width=12).grid(row=0, column=2)
     ttk.Label(stats_frame, text="Lowest", width=12).grid(row=0, column=3)
     ttk.Label(stats_frame, text="Temp (°C)", width=12).grid(row=1, column=0)
-    temp_cur = ttk.Label(stats_frame, text="--", width=12); temp_cur.grid(row=1, column=1)
-    temp_high = ttk.Label(stats_frame, text="--", width=12); temp_high.grid(row=1, column=2)
-    temp_low = ttk.Label(stats_frame, text="--", width=12); temp_low.grid(row=1, column=3)
+    temp_cur = ttk.Label(stats_frame, text="--", width=12);
+    temp_cur.grid(row=1, column=1)
+    temp_high = ttk.Label(stats_frame, text="--", width=12);
+    temp_high.grid(row=1, column=2)
+    temp_low = ttk.Label(stats_frame, text="--", width=12);
+    temp_low.grid(row=1, column=3)
     ttk.Label(stats_frame, text="Humid (%)", width=12).grid(row=2, column=0)
-    humid_cur = ttk.Label(stats_frame, text="--", width=12); humid_cur.grid(row=2, column=1)
-    humid_high = ttk.Label(stats_frame, text="--", width=12); humid_high.grid(row=2, column=2)
-    humid_low = ttk.Label(stats_frame, text="--", width=12); humid_low.grid(row=2, column=3)
+    humid_cur = ttk.Label(stats_frame, text="--", width=12);
+    humid_cur.grid(row=2, column=1)
+    humid_high = ttk.Label(stats_frame, text="--", width=12);
+    humid_high.grid(row=2, column=2)
+    humid_low = ttk.Label(stats_frame, text="--", width=12);
+    humid_low.grid(row=2, column=3)
 
     stats = {"temp_high": None, "temp_low": None, "humid_high": None, "humid_low": None}
     simulation = {"active": False, "temp": 25.0, "humid": 55.0}
@@ -694,14 +723,14 @@ def humidity_temperature_window():
         try:
             parts = line.strip().split()
             hidx = parts.index("Humidity:")
-            humidity = float(parts[hidx+1])
+            humidity = float(parts[hidx + 1])
             tidx = parts.index("Temperature:")
-            temp = float(parts[tidx+1])
+            temp = float(parts[tidx + 1])
             return temp, humidity
         except Exception:
             return None, None
 
-    widgets = { 'temp_arc': temp_arc, 'temp_text': temp_text, 'humid_fill': humid_fill, 'humid_text': humid_text }
+    widgets = {'temp_arc': temp_arc, 'temp_text': temp_text, 'humid_fill': humid_fill, 'humid_text': humid_text}
     MIN_TEMP, MAX_TEMP = 0.0, 50.0
     MIN_HUM, MAX_HUM = 0.0, 100.0
 
@@ -746,7 +775,8 @@ def humidity_temperature_window():
                 except Exception:
                     temp, humid = None, None
             else:
-                temp = None; humid = None
+                temp = None;
+                humid = None
             if temp is not None and humid is not None:
                 temp_cur.config(text=f"{temp:.2f}")
                 humid_cur.config(text=f"{humid:.2f}")
@@ -755,12 +785,13 @@ def humidity_temperature_window():
                 temp_low.config(text=f"{stats['temp_low']:.2f}")
                 humid_high.config(text=f"{stats['humid_high']:.2f}")
                 humid_low.config(text=f"{stats['humid_low']:.2f}")
-                pct_t = max(0.0, min(1.0, (temp - MIN_TEMP)/(MAX_TEMP-MIN_TEMP)))
+                pct_t = max(0.0, min(1.0, (temp - MIN_TEMP) / (MAX_TEMP - MIN_TEMP)))
                 extent = int(180 * pct_t)
                 canvas.itemconfig(widgets['temp_arc'], extent=extent)
                 canvas.itemconfig(widgets['temp_text'], text=f"{temp:.1f} °C")
-                pct_h = max(0.0, min(1.0, (humid - MIN_HUM)/(MAX_HUM-MIN_HUM)))
-                x1 = h_x + 6; x2 = h_x + h_w - 6
+                pct_h = max(0.0, min(1.0, (humid - MIN_HUM) / (MAX_HUM - MIN_HUM)))
+                x1 = h_x + 6;
+                x2 = h_x + h_w - 6
                 y_bottom = h_y + h_h - 6
                 y_top = h_y + 6 + (1 - pct_h) * (h_h - 12)
                 canvas.coords(widgets['humid_fill'], x1, y_top, x2, y_bottom)
@@ -778,15 +809,18 @@ def humidity_temperature_window():
                 except Exception:
                     pass
             else:
-                temp_cur.config(text="--"); humid_cur.config(text="--")
+                temp_cur.config(text="--");
+                humid_cur.config(text="--")
         except Exception:
-            temp_cur.config(text="--"); humid_cur.config(text="--")
+            temp_cur.config(text="--");
+            humid_cur.config(text="--")
 
     def auto_update():
         fetch_and_update()
         win.after(1000, auto_update)
 
-    btn_frame = ttk.Frame(win); btn_frame.pack(pady=10)
+    btn_frame = ttk.Frame(win);
+    btn_frame.pack(pady=10)
 
     def toggle_simulation():
         if is_serial_connected() and not simulation["active"]:
@@ -821,7 +855,7 @@ def rfid_window():
     win.geometry("420x260")
     win.configure(bg=BG_COLOR)
     apply_dark_theme(win)
-    ttk.Label(win, text="Item Detector System", font=("Segoe UI", 14, "bold")).pack(pady=12)
+    ttk.Label(win, text="RFID SYSTEM", font=("Segoe UI", 14, "bold")).pack(pady=12)
     ttk.Label(win, text="(Placeholder)").pack(pady=20)
     ttk.Button(win, text="Close", command=win.destroy).pack(pady=10)
 
@@ -847,7 +881,8 @@ def distance_window():
 
     log_frame = ttk.Frame(container)
     log_frame.pack(fill="both", expand=True, pady=(4, 6))
-    txt = tk.Text(log_frame, height=6, bg="#222222", fg=FG_COLOR, insertbackground=FG_COLOR, highlightthickness=0, relief=tk.FLAT, wrap="word")
+    txt = tk.Text(log_frame, height=6, bg="#222222", fg=FG_COLOR, insertbackground=FG_COLOR, highlightthickness=0,
+                  relief=tk.FLAT, wrap="word")
     txt.pack(side=tk.LEFT, fill="both", expand=True)
     scroll = ttk.Scrollbar(log_frame, command=txt.yview)
     scroll.pack(side=tk.RIGHT, fill="y")
@@ -1147,11 +1182,13 @@ def analytics_window():
             summary_var.set("No data yet.")
             return
         kinds = ", ".join(f"{k}:{v}" for k, v in stats.get("kinds", {}).items())
+
         def fmt_block(name):
             blk = stats.get(name, {})
             if blk.get("avg") is None:
                 return f"{name[:4]} -"
             return f"{name[:4]} min:{blk['min']:.2f} max:{blk['max']:.2f} avg:{blk['avg']:.2f}"
+
         summary_var.set(
             f"Entries: {stats['count']} | Kinds: {kinds} | "
             f"{fmt_block('temperature')} | {fmt_block('humidity')} | {fmt_block('distance')}"
@@ -1185,5 +1222,6 @@ def analytics_window():
     ttk.Button(btn_frame, text="Close", command=win.destroy, width=12).pack(side=tk.LEFT, padx=6)
 
     refresh()
+
 
 login_window()
