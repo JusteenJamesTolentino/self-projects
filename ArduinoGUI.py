@@ -344,9 +344,9 @@ def main_menu():
     menu_buttons.append(("HUMIDITY & TEMPERATURE", open_humidity))
     def open_lock():
         lock_window()
-    menu_buttons.append(("LOCK / UNLOCK SYSTEM", open_lock))
+    menu_buttons.append(("RFID SYSTEM", open_lock))
     def open_item_detector():
-        item_detector_window()
+        rfid_window()
     menu_buttons.append(("ITEM DETECTOR SYSTEM", open_item_detector))
     def open_distance():
         distance_window()
