@@ -2,8 +2,6 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import sys
 import time
-import os
-import json
 
 try:
     from data_logger import log_reading, load_entries, compute_stats, clear_log, export_csv
@@ -177,7 +175,7 @@ def draw_rounded_rect(canvas, x1, y1, x2, y2, r=20, **kwargs):
 def login_window():
     login = tk.Tk()
     login.title("Login")
-    login.geometry("620x360")
+    login.geometry("620x460")
     login.configure(bg=BG_COLOR)
     apply_dark_theme(login)
 
@@ -286,7 +284,7 @@ def login_window():
 def main_menu():
     menu = tk.Tk()
     menu.title("Main Menu")
-    menu.geometry("650x450")
+    menu.geometry("650x550")
     menu.configure(bg=BG_COLOR)
     apply_dark_theme(menu)
 
