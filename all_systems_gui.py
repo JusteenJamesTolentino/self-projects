@@ -1,6 +1,6 @@
-  
+
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox, filedialog, simpledialog
 import sys
 import time
 import json
@@ -47,9 +47,10 @@ arduino = None
 # Persistent RFID authorization store
 AUTH_FILE = "authorized_rfid.json"
 ADMIN_UIDS = {"29:4C:62:12"}  # Predefined admin cards (normalized uppercase)
+AUTH_NAMES_FILE = "authorized_users.json"  # UID -> display name mapping
 
 # Simple current session store
-CURRENT_USER = {"uid": None, "is_admin": False}
+CURRENT_USER = {"uid": None, "is_admin": False, "name": None}
 
 
 def load_authorized_uids():
@@ -73,6 +74,30 @@ def save_authorized_uids(uids):
 
 
 authorized_uids = load_authorized_uids()
+
+
+def load_authorized_names():
+    try:
+        with open(AUTH_NAMES_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if isinstance(data, dict):
+                return {str(k).strip().upper(): str(v) for k, v in data.items()}
+    except Exception:
+        pass
+    return {}
+
+
+def save_authorized_names(name_map):
+    try:
+        norm = {str(k).strip().upper(): str(v) for k, v in name_map.items()}
+        with open(AUTH_NAMES_FILE, "w", encoding="utf-8") as f:
+            json.dump(norm, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception:
+        return False
+
+
+authorized_names = load_authorized_names()
 
 
 def auto_detect_serial():
@@ -292,6 +317,7 @@ def login_window():
         username = username_entry.get().strip()
         password = password_entry.get().strip()
         if username == "group1" and password == "group1":
+            CURRENT_USER["name"] = username
             login.destroy()
             main_menu()
         else:
@@ -389,9 +415,11 @@ def login_window():
             is_admin = normalized in ADMIN_UIDS
             if normalized in authorized_uids or is_admin:
                 role = "Admin" if is_admin else "User"
-                rfid_status.config(text=f"RFID recognized: {normalized} ({role})")
+                display_name = authorized_names.get(normalized, normalized)
+                rfid_status.config(text=f"RFID recognized: {display_name} ({role})")
                 CURRENT_USER["uid"] = normalized
                 CURRENT_USER["is_admin"] = is_admin
+                CURRENT_USER["name"] = display_name
                 login.destroy()
                 main_menu()
                 return
@@ -431,7 +459,8 @@ def main_menu():
     title = "MAIN MENU"
     if CURRENT_USER.get("uid"):
         role = "Admin" if CURRENT_USER.get("is_admin") else "User"
-        title = f"MAIN MENU — {CURRENT_USER['uid']} ({role})"
+        display = CURRENT_USER.get("name") or CURRENT_USER.get("uid")
+        title = f"MAIN MENU — {display} ({role})"
     ttk.Label(menu, text=title, font=FONT_TITLE).pack(pady=20)
 
     status_frame = ttk.Frame(menu)
@@ -501,6 +530,13 @@ def main_menu():
         distance_window()
 
     menu_buttons.append(("DISTANCE MEASURE SYSTEM", open_distance))
+
+    def open_accounts():
+        accounts_window()
+
+    # Show ACCOUNTS only to admins
+    if CURRENT_USER.get("is_admin"):
+        menu_buttons.append(("ACCOUNTS", open_accounts))
 
     def open_other():
         other_window()
@@ -1468,6 +1504,173 @@ def analytics_window():
     ttk.Button(btn_frame, text="Close", command=win.destroy, width=12).pack(side=tk.LEFT, padx=6)
 
     refresh()
+
+
+def accounts_window():
+    win = tk.Toplevel()
+    win.title("Accounts (Admin)")
+    win.geometry("600x480")
+    win.configure(bg=BG_COLOR)
+    apply_dark_theme(win)
+
+    ttk.Label(win, text="Accounts Management", font=("Segoe UI", 14, "bold")).pack(pady=10)
+    info = ttk.Label(win, text="Step 1: Scan ADMIN card to unlock", font=("Segoe UI", 10))
+    info.pack(pady=(0, 6))
+
+    status = ttk.Label(win, text="Waiting for admin…", font=("Segoe UI", 10))
+    status.pack(pady=(0, 8))
+
+    # List current authorized UIDs
+    list_frame = ttk.Frame(win)
+    list_frame.pack(fill="both", expand=True, padx=10, pady=6)
+    listbox = tk.Listbox(list_frame, bg="#222", fg=FG_COLOR, height=12)
+    listbox.pack(side=tk.LEFT, fill="both", expand=True)
+    sb = ttk.Scrollbar(list_frame, command=listbox.yview)
+    sb.pack(side=tk.RIGHT, fill="y")
+    listbox.configure(yscrollcommand=sb.set)
+
+    def refresh_list():
+        listbox.delete(0, tk.END)
+        # Admin UIDs shown with [ADMIN]
+        for uid in sorted(authorized_uids.union(ADMIN_UIDS)):
+            tag = " [ADMIN]" if uid in ADMIN_UIDS else ""
+            label = authorized_names.get(uid, uid)
+            listbox.insert(tk.END, f"{label} ({uid}){tag}")
+
+    refresh_list()
+
+    # Controls
+    btns = ttk.Frame(win)
+    btns.pack(pady=6)
+
+    state = {"unlocked": False, "stop": False, "mode": "admin"}  # admin -> add_user
+
+    def parse_uid_line(raw):
+        try:
+            if not raw:
+                return None
+            if isinstance(raw, bytes):
+                try:
+                    raw = raw.decode(errors="ignore")
+                except Exception:
+                    raw = str(raw)
+            text = raw.strip()
+            if not text:
+                return None
+            if "UID" in text:
+                part = text.split("UID:")[-1]
+                uid = part.replace(" ", "").replace("-", ":").replace("::", ":").upper().strip()
+                return uid if uid else None
+        except Exception:
+            return None
+        return None
+
+    def listen_loop():
+        # Runs on the Tk thread via after()
+        if state["stop"]:
+            return
+        # Ensure serial
+        if not is_serial_connected():
+            status.config(text="Not connected. Connect serial to proceed.")
+            win.after(600, listen_loop)
+            return
+        # Try read one line (non-blocking-ish)
+        line = b""
+        try:
+            line = arduino.readline()
+        except Exception:
+            line = b""
+        uid = parse_uid_line(line)
+        if state["mode"] == "admin":
+            if uid:
+                if uid in ADMIN_UIDS:
+                    state["unlocked"] = True
+                    state["mode"] = "add_user"
+                    info.config(text="Step 2: Scan USER card to add")
+                    status.config(text=f"Admin OK: {uid}")
+                else:
+                    status.config(text=f"Not an admin card: {uid}")
+        else:  # add_user
+            if uid:
+                if uid in ADMIN_UIDS:
+                    status.config(text="That is an admin card. Present a user card.")
+                else:
+                    if uid in authorized_uids:
+                        messagebox.showinfo("Accounts", f"User already authorized: {uid}")
+                    else:
+                        # Prompt for friendly name
+                        name = simpledialog.askstring("User Name", "Enter display name for this card:", parent=win)
+                        if name is None:
+                            name = ""
+                        authorized_uids.add(uid)
+                        if name.strip():
+                            authorized_names[uid] = name.strip()
+                            save_authorized_names(authorized_names)
+                        if save_authorized_uids(authorized_uids):
+                            shown = f"{authorized_names.get(uid, uid)} ({uid})"
+                            messagebox.showinfo("Accounts", f"User added: {shown}")
+                        else:
+                            messagebox.showerror("Accounts", "Failed to save list.")
+                    refresh_list()
+                    # Continue listening for more user cards until admin relock or close
+        win.after(250, listen_loop)
+
+    def start_listening():
+        state["stop"] = False
+        state["mode"] = "admin"
+        state["unlocked"] = False
+        info.config(text="Step 1: Scan ADMIN card to unlock")
+        status.config(text="Waiting for admin…")
+        listen_loop()
+
+    def relock():
+        state["mode"] = "admin"
+        state["unlocked"] = False
+        info.config(text="Step 1: Scan ADMIN card to unlock")
+        status.config(text="Locked")
+
+    def remove_selected():
+        idx = listbox.curselection()
+        if not idx:
+            messagebox.showinfo("Remove", "Select a UID to remove.")
+            return
+        entry = listbox.get(idx[0])
+        # entry is like: "Name (UID) [ADMIN]?" — extract UID between parentheses if present
+        uid = entry
+        try:
+            l = entry.index("(")
+            r = entry.index(")", l+1)
+            uid = entry[l+1:r]
+        except Exception:
+            uid = entry.split()[0]
+        if uid in ADMIN_UIDS:
+            messagebox.showwarning("Remove", "Cannot remove an ADMIN card here.")
+            return
+        if not state["unlocked"]:
+            messagebox.showwarning("Locked", "Scan ADMIN card first to unlock.")
+            return
+        if uid in authorized_uids:
+            authorized_uids.discard(uid)
+            if save_authorized_uids(authorized_uids):
+                messagebox.showinfo("Remove", f"Removed: {uid}")
+            else:
+                messagebox.showerror("Remove", "Failed to save list.")
+            # Also remove name mapping if exists
+            if uid in authorized_names:
+                authorized_names.pop(uid, None)
+                save_authorized_names(authorized_names)
+            refresh_list()
+
+    ttk.Button(btns, text="Start (Scan Admin)", command=start_listening, width=18).pack(side=tk.LEFT, padx=6)
+    ttk.Button(btns, text="Relock", command=relock, width=10).pack(side=tk.LEFT, padx=6)
+    ttk.Button(btns, text="Remove Selected", command=remove_selected, width=16).pack(side=tk.LEFT, padx=6)
+    ttk.Button(btns, text="Close", command=win.destroy, width=10).pack(side=tk.LEFT, padx=6)
+
+    def on_close():
+        state["stop"] = True
+        win.destroy()
+
+    win.protocol("WM_DELETE_WINDOW", on_close)
 
 
 login_window()
