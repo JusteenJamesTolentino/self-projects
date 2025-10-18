@@ -1,7 +1,3 @@
-// Unified sketch: RFID + Traffic LEDs + DHT11 + Ultrasonic (HC-SR04)
-// Pins remapped to avoid conflicts across modules.
-// Serial protocol matches ArduinoGUI.py expectations.
-
 #include <SPI.h>
 #include <MFRC522.h>
 #include "DHT.h"
@@ -30,7 +26,7 @@ unsigned long lastPingMs = 0;
 bool ultrasonicStreaming = false;
 unsigned long lastStreamMs = 0;
 const unsigned long US_PING_MIN_MS = 60;    // ~ >16Hz safe
-const unsigned long US_STREAM_INTERVAL_MS = 100; // 10Hz
+const unsigned long US_STREAM_INTERVAL_MS = 200; // ~5Hz (align with GUI 200ms loop)
 
 // Helpers
 float readDistanceCM() {
@@ -88,6 +84,16 @@ void setup() {
   pinMode(US_ECHO, INPUT);
 
   Serial.println("System ready (RFID + DHT11 + Ultrasonic + LEDs)");
+  // Basic pin map and system info
+  Serial.print("[SYS] RFID SS="); Serial.print(RFID_SS);
+  Serial.print(" RST="); Serial.println(RFID_RST);
+  Serial.print("[SYS] LEDs R/Y/G="); Serial.print(LED_RED);
+  Serial.print("/"); Serial.print(LED_YELLOW);
+  Serial.print("/"); Serial.println(LED_GREEN);
+  Serial.print("[SYS] DHT PIN="); Serial.println(DHTPIN);
+  Serial.print("[SYS] US TRIG/ECHO="); Serial.print(US_TRIG);
+  Serial.print("/"); Serial.println(US_ECHO);
+  Serial.print("[SYS] US STREAM ivl ms="); Serial.println(US_STREAM_INTERVAL_MS);
 }
 
 void handleReadAllEnv() {
@@ -151,14 +157,27 @@ void loop() {
     if (upper.length() == 1) {
       char ch = upper.charAt(0);
       switch (ch) {
-        case 'G': setLeds(true, false, false); break;   // GO (green)
-        case 'Y': setLeds(false, true, false); break;   // CAUTION (yellow)
-        case 'R': setLeds(false, false, true); handleReadAllEnv(); break; // STOP + env read
-        case 'C': setLeds(false, false, false); break;  // Clear/Off
-        case 'H': handleHumidity(); break;
-        case 'T': handleTemperature(); break;
-        case 'U': if (canPing()) handleUltrasonicSingle(); break;
-        case 'U' + 32: ultrasonicStreaming = true; Serial.println("US:STREAM ON"); break; // 'u'
+        case 'G': setLeds(true, false, false); Serial.println("LED:GREEN"); break;   // GO (green)
+        case 'Y': setLeds(false, true, false); Serial.println("LED:YELLOW"); break;   // CAUTION (yellow)
+        case 'R':
+          setLeds(false, false, true);
+          handleReadAllEnv();
+          // Log AFTER sending env line to avoid interfering with GUI single-line read
+          Serial.println("LED:RED");
+          break; // STOP + env read
+        case 'C': setLeds(false, false, false); Serial.println("LED:OFF"); break;  // Clear/Off
+        case 'H': handleHumidity(); Serial.println("DHT:HUMIDITY SENT"); break;
+        case 'T': handleTemperature(); Serial.println("DHT:TEMP SENT"); break;
+        case 'U': if (canPing()) { handleUltrasonicSingle(); Serial.println("US:SINGLE"); } break;
+        case 'L':
+          ultrasonicStreaming = true;
+          // reset timers so first sample is immediate
+          lastStreamMs = 0;
+          lastPingMs = 0;
+          // Emit an immediate sample so GUI shows a value right away
+          handleUltrasonicSingle();
+          Serial.println("US:STREAM ON");
+          break; // 'l'
         case 'S': ultrasonicStreaming = false; Serial.println("US:STREAM OFF"); break;
         default: break;
       }
@@ -166,10 +185,10 @@ void loop() {
     }
 
     // Word tokens (e.g., GREEN/YELLOW/RED/OFF)
-    if (upper == "GREEN") setLeds(true, false, false);
-    else if (upper == "YELLOW") setLeds(false, true, false);
-    else if (upper == "RED") setLeds(false, false, true);
-    else if (upper == "OFF") setLeds(false, false, false);
+    if (upper == "GREEN") { setLeds(true, false, false); Serial.println("LED:GREEN"); }
+    else if (upper == "YELLOW") { setLeds(false, true, false); Serial.println("LED:YELLOW"); }
+    else if (upper == "RED") { setLeds(false, false, true); Serial.println("LED:RED"); }
+    else if (upper == "OFF") { setLeds(false, false, false); Serial.println("LED:OFF"); }
     // extendable: could accept "READ" to trigger handleReadAllEnv()
   };
 
@@ -195,6 +214,7 @@ void loop() {
       // Briefly show yellow to indicate tag detected (doesn't override manual state long-term)
       setLeds(digitalRead(LED_GREEN), true, digitalRead(LED_RED));
       printUID();
+      Serial.println("RFID:TAG DETECTED");
       delay(100); // small visual feedback
       setLeds(digitalRead(LED_GREEN), false, digitalRead(LED_RED));
       rfid.PICC_HaltA();
