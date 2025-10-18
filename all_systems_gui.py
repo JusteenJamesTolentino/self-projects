@@ -4,6 +4,8 @@ from tkinter import ttk, messagebox, filedialog, simpledialog
 import sys
 import time
 import json
+import threading
+import asyncio
 
 try:
     from data_logger import log_reading, load_entries, compute_stats, clear_log, export_csv
@@ -37,12 +39,27 @@ except Exception:
     serial = None
     list_ports = None
 
+# Optional Facebook integration
+try:
+    from fbchat_muqit import Client, Message, ThreadType, Mention
+    FB_AVAILABLE = True
+except Exception:
+    Client = object  # placeholder
+    Message = object
+    ThreadType = object
+    Mention = object
+    FB_AVAILABLE = False
+
 BG_COLOR = "#1e1e1e"
 FG_COLOR = "#ffffff"
 BTN_COLOR = "#007acc"
 FONT_MAIN = ("Segoe UI", 12)
 FONT_TITLE = ("Segoe UI", 16, "bold")
 arduino = None
+SERIAL_LOCK = threading.Lock()
+
+# Facebook bridge (initialized later)
+FB_MANAGER = None
 
 # Persistent RFID authorization store
 AUTH_FILE = "authorized_rfid.json"
@@ -200,12 +217,230 @@ def is_serial_connected():
 def send_command(command):
     if is_serial_connected():
         try:
-            arduino.write(command.encode())
+            # Ensure thread-safe serial writes if Facebook bot also sends commands
+            try:
+                lock = SERIAL_LOCK
+            except Exception:
+                lock = None
+            if lock:
+                with lock:
+                    arduino.write(command.encode())
+            else:
+                arduino.write(command.encode())
             print(f"OUTPUT -> {command}")
         except Exception as e:
             print(f"[Serial] Write failed: {e}")
     else:
         print(f"[Serial] Not connected, would send: {command}")
+
+
+# ---- Facebook Bot integration ----
+if FB_AVAILABLE:
+    class GuiBot(Client):
+        # Defaults (use your values)
+        TEST_THREAD_ID = "757293467310599"
+        BOT_MODE = "TEST"  # TEST: only respond in TEST_THREAD_ID; GLOBAL: respond anywhere
+        OWNER_ID = "100088164532775"
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.gui_notify = None  # callable: (status_text, connected:bool) -> None
+            self._name_cache = {}
+
+        async def _get_name(self, uid: str) -> str:
+            try:
+                if uid in self._name_cache:
+                    return self._name_cache[uid]
+                info = await self.fetchUserInfo(uid)
+                if isinstance(info, dict) and uid in info:
+                    name = getattr(info[uid], "name", None) or getattr(info[uid], "full_name", None)
+                    if name:
+                        self._name_cache[uid] = name
+                        return name
+            except Exception:
+                pass
+            return uid
+
+        async def onMessage(self, mid, author_id, message, message_object, thread_id, thread_type=None, **kwargs):
+            # Default thread type when available
+            print(f"[FB] Message from {author_id} in {thread_id} ({thread_type}): {message}")
+            if thread_type is None and FB_AVAILABLE:
+                try:
+                    thread_type = ThreadType.USER
+                except Exception:
+                    thread_type = None
+            text = (message or getattr(message_object, 'text', '') or '').strip()
+            if not text:
+                return
+
+            # Mode restriction
+            if str(self.BOT_MODE).upper() == "TEST" and str(thread_id) != str(self.TEST_THREAD_ID):
+                return
+
+            parts = text.split()
+            if len(parts) < 2:
+                return
+            if parts[0].lower() != "bot":
+                return
+
+            cmd = parts[1].lower()
+
+            async def reply(msg: str):
+                try:
+                    await self.sendMessage(msg, thread_id=thread_id, thread_type=thread_type, reply_to_id=getattr(message_object, 'uid', None))
+                except Exception:
+                    pass
+
+            # Basic help
+            if cmd == "help":
+                await reply(
+                    "🤖 Bot Controls:\n"
+                    "• bot tms <go|caution|stop|off> — control traffic lights\n"
+                    "• bot led <green|yellow|red|off> — same as tms\n"
+                    "• bot distance <once> — single ultrasonic read (logged)\n"
+                    "• bot stream <on|off> — ultrasonic streaming toggle\n"
+                    "• bot env — read humidity & temperature (logged)\n"
+                    "• bot who — show current GUI user\n"
+                    "• bot mode — show current bot mode\n"
+                )
+                return
+
+            # Simple status
+            if cmd == "mode":
+                await reply(f"🧩 Mode: {self.BOT_MODE}")
+                return
+
+            # Hardware controls via Arduino serial (write-only; GUI handles reads/logging)
+            if cmd in ("tms", "led") and len(parts) >= 3:
+                arg = parts[2].lower()
+                m = {"go": "G", "green": "G", "caution": "Y", "yellow": "Y", "stop": "R", "red": "R", "off": "C"}
+                if arg in m:
+                    send_command(m[arg])
+                    await reply(f"✅ {cmd} -> {arg}")
+                else:
+                    await reply("Usage: bot tms <go|caution|stop|off>")
+                return
+
+            if cmd == "distance" and len(parts) >= 3:
+                if parts[2].lower() == "once":
+                    send_command('U')
+                    await reply("📏 Requested one distance sample.")
+                    return
+                await reply("Usage: bot distance once")
+                return
+
+            if cmd == "stream" and len(parts) >= 3:
+                arg = parts[2].lower()
+                if arg in ("on", "start"):
+                    send_command('L')
+                    await reply("📡 Streaming ON")
+                elif arg in ("off", "stop"):
+                    send_command('S')
+                    await reply("📡 Streaming OFF")
+                else:
+                    await reply("Usage: bot stream <on|off>")
+                return
+
+            if cmd == "env":
+                # Trigger a fresh read; GUI will log it
+                send_command('R')
+                await reply("🌡️ Requested humidity & temperature.")
+                return
+
+            if cmd == "who":
+                name = CURRENT_USER.get("name") or CURRENT_USER.get("uid") or "(no session)"
+                role = "Admin" if CURRENT_USER.get("is_admin") else ("User" if CURRENT_USER.get("uid") else "-")
+                await reply(f"👤 Current GUI user: {name} ({role})")
+                return
+
+            await reply("❓ Unknown command. Try `bot help`.")
+
+    class FacebookManager:
+        def __init__(self):
+            self.thread = None
+            self.loop = None
+            self.bot = None
+            self.connected = False
+            self.name = None
+            self.uid = None
+            self._status_cb = None
+
+        def start(self, status_cb=None, cookies_path: str = "./fbstate.json"):
+            if self.thread and self.thread.is_alive():
+                return
+            self._status_cb = status_cb
+            self.thread = threading.Thread(target=self._thread_main, args=(cookies_path,), daemon=True)
+            self.thread.start()
+
+        def _thread_main(self, cookies_path: str):
+            asyncio.run(self._run(cookies_path))
+
+        async def _run(self, cookies_path: str):
+            try:
+                if self._status_cb:
+                    self._status_cb("FB: Connecting…", False)
+                bot = await GuiBot.startSession(cookies_path)
+                self.bot = bot
+                self.loop = asyncio.get_running_loop()
+                # Fetch self name
+                if await bot.isLoggedIn():
+                    info = await bot.fetchUserInfo(bot.uid)
+                    display = None
+                    if isinstance(info, dict) and bot.uid in info:
+                        display = getattr(info[bot.uid], 'name', None) or getattr(info[bot.uid], 'full_name', None)
+                    self.name = display or str(bot.uid)
+                    self.uid = bot.uid
+                    self.connected = True
+                    if self._status_cb:
+                        self._status_cb(f"FB: Connected as {self.name}", True)
+                await bot.listen()
+            except Exception as e:
+                if self._status_cb:
+                    self._status_cb("FB: Connection error", False)
+            finally:
+                self.connected = False
+                if self._status_cb:
+                    self._status_cb("FB: Disconnected", False)
+
+        def notify_access(self, text: str):
+            try:
+                if not (self.bot and self.loop and self.connected):
+                    return
+                async def _send():
+                    try:
+                        await self.bot.sendMessage(text, thread_id=self.bot.TEST_THREAD_ID, thread_type=ThreadType.USER)
+                    except Exception:
+                        pass
+                asyncio.run_coroutine_threadsafe(_send(), self.loop)
+            except Exception:
+                pass
+
+        def stop(self):
+            # Best-effort: no clean stop available without library hooks. User can leave it running.
+            pass
+else:
+    class FacebookManager:
+        def __init__(self):
+            self.connected = False
+            self.name = None
+        def start(self, status_cb=None, cookies_path: str = "./fbstate.json"):
+            if status_cb:
+                status_cb("FB: Not available", False)
+        def notify_access(self, text: str):
+            pass
+        def stop(self):
+            pass
+
+
+# Small helper to safely send Facebook notifications (if connected)
+def fb_notify(text: str):
+    try:
+        global FB_MANAGER
+        if FB_MANAGER is None:
+            return
+        FB_MANAGER.notify_access(text)
+    except Exception:
+        pass
 
 
 def apply_dark_theme(root):
@@ -473,6 +708,11 @@ def main_menu():
     serial_label = ttk.Label(status_frame, textvariable=serial_status_var, font=("Segoe UI", 10))
     serial_label.pack(side=tk.LEFT, padx=(0, 12))
 
+    # Facebook status (optional)
+    fb_status_var = tk.StringVar(value="FB: Not connected")
+    fb_label = ttk.Label(status_frame, textvariable=fb_status_var, font=("Segoe UI", 10))
+    fb_label.pack(side=tk.LEFT, padx=(0, 12))
+
     def toggle_serial():
         if is_serial_connected():
             close_serial()
@@ -500,6 +740,29 @@ def main_menu():
         btn_text = "Connect"
     toggle_btn = ttk.Button(status_frame, text=btn_text, command=toggle_serial, width=10)
     toggle_btn.pack(side=tk.LEFT)
+
+    # --- Facebook Controls ---
+    def fb_status_update(text: str, ok: bool):
+        try:
+            # Ensure UI updates occur on Tk thread
+            menu.after(0, lambda: fb_status_var.set(text))
+        except Exception:
+            pass
+
+    def toggle_facebook():
+        # Use a shared global manager
+        global FB_MANAGER
+        if FB_MANAGER is None:
+            FB_MANAGER = FacebookManager()
+        # Start only; stop is best-effort no-op
+        FB_MANAGER.start(status_cb=fb_status_update, cookies_path="./fbstate.json")
+
+    fb_btn = ttk.Button(status_frame, text="Connect FB", command=toggle_facebook, width=12)
+    # Only enable if module available
+    if not FB_AVAILABLE:
+        fb_btn.config(state=tk.DISABLED)
+        fb_status_var.set("FB: Not available")
+    fb_btn.pack(side=tk.LEFT, padx=(8, 0))
 
     def open_tms():
         menu.destroy()
@@ -534,9 +797,8 @@ def main_menu():
     def open_accounts():
         accounts_window()
 
-    # Show ACCOUNTS only to admins
-    if CURRENT_USER.get("is_admin"):
-        menu_buttons.append(("ACCOUNTS", open_accounts))
+    # Always show ACCOUNTS; the window itself requires an Admin scan to unlock actions
+    menu_buttons.append(("ACCOUNTS", open_accounts))
 
     def open_other():
         other_window()
@@ -564,6 +826,34 @@ def main_menu():
     signout_btn = ttk.Button(menu, text="Sign Out", command=sign_out, width=12)
     signout_btn.pack(pady=(8, 12))
 
+    # If a FB manager exists globally and is connected, notify of session
+    try:
+        global FB_MANAGER
+    except Exception:
+        FB_MANAGER = None
+
+    def notify_login_once():
+        try:
+            # Initialize shared manager once per process
+            global FB_MANAGER
+            if FB_MANAGER is None:
+                FB_MANAGER = FacebookManager()
+            # Attach label updater; avoid starting twice
+            def _cb(text, ok):
+                try:
+                    fb_status_var.set(text)
+                except Exception:
+                    pass
+            # Do not autostart; user must press Connect FB
+            name = CURRENT_USER.get("name") or CURRENT_USER.get("uid") or "(unknown)"
+            role = "Admin" if CURRENT_USER.get("is_admin") else ("User" if CURRENT_USER.get("uid") else "-")
+            FB_MANAGER.notify_access(f"🖥️ GUI session: {name} ({role}) logged in")
+        except Exception:
+            pass
+
+    # Fire-and-forget: notify if already connected
+    menu.after(500, notify_login_once)
+
     menu.mainloop()
 
 
@@ -578,6 +868,8 @@ def traffic_light_control():
     cycle_running = {"active": False}
     timer_job = {"job": None}
     cycle_counter = {"id": 0}
+    # After entering CAUTION, this indicates which phase comes next ("STOP" or "GO").
+    cycle_meta = {"after_caution": "STOP"}
 
     def back_to_menu():
         try:
@@ -670,12 +962,19 @@ def traffic_light_control():
             cycle_counter["id"] += 1
             current_phase["state"] = "GO"
             current_phase["time_left"] = 15
+            cycle_meta["after_caution"] = "STOP"
             status_label.config(text="LIGHT: GO")
             timer_label.config(text="TIMER: 15")
             send_command("G")
             set_light("GO")
             try:
                 log_reading("traffic", {"event": "start_cycle", "phase": "GO", "cycle_id": cycle_counter["id"]})
+            except Exception:
+                pass
+            # Notify via Facebook who used TMS
+            try:
+                actor = CURRENT_USER.get("name") or CURRENT_USER.get("uid") or "Unknown"
+                fb_notify(f"{actor} used TMS (start cycle -> GO)")
             except Exception:
                 pass
             update_timer()
@@ -700,12 +999,14 @@ def traffic_light_control():
     def next_phase():
         if not cycle_running["active"]:
             return
+        # Desired cycle: GO -> CAUTION -> STOP -> CAUTION -> GO -> ...
         if current_phase["state"] == "GO":
+            # Enter CAUTION; next after caution will be STOP
             current_phase["state"] = "CAUTION"
             current_phase["time_left"] = 5
+            cycle_meta["after_caution"] = "STOP"
             status_label.config(text="LIGHT: CAUTION")
             timer_label.config(text="TIMER: 5")
-            # Y = yellow / caution
             send_command("Y")
             set_light("CAUTION")
             try:
@@ -713,26 +1014,41 @@ def traffic_light_control():
             except Exception:
                 pass
         elif current_phase["state"] == "CAUTION":
-            current_phase["state"] = "STOP"
-            current_phase["time_left"] = 15
-            status_label.config(text="LIGHT: STOP")
-            timer_label.config(text="TIMER: 15")
-            # R = red / stop
-            send_command("R")
-            set_light("STOP")
-            try:
-                log_reading("traffic", {"event": "phase", "phase": "STOP", "cycle_id": cycle_counter["id"]})
-            except Exception:
-                pass
+            if cycle_meta.get("after_caution") == "STOP":
+                # Move to STOP
+                current_phase["state"] = "STOP"
+                current_phase["time_left"] = 15
+                status_label.config(text="LIGHT: STOP")
+                timer_label.config(text="TIMER: 15")
+                send_command("R")
+                set_light("STOP")
+                try:
+                    log_reading("traffic", {"event": "phase", "phase": "STOP", "cycle_id": cycle_counter["id"]})
+                except Exception:
+                    pass
+            else:
+                # Move to GO
+                current_phase["state"] = "GO"
+                current_phase["time_left"] = 15
+                status_label.config(text="LIGHT: GO")
+                timer_label.config(text="TIMER: 15")
+                send_command("G")
+                set_light("GO")
+                try:
+                    log_reading("traffic", {"event": "phase", "phase": "GO", "cycle_id": cycle_counter["id"]})
+                except Exception:
+                    pass
         elif current_phase["state"] == "STOP":
-            current_phase["state"] = "GO"
-            current_phase["time_left"] = 15
-            status_label.config(text="LIGHT: GO")
-            timer_label.config(text="TIMER: 15")
-            send_command("G")
-            set_light("GO")
+            # Insert CAUTION before GO; next after caution will be GO
+            current_phase["state"] = "CAUTION"
+            current_phase["time_left"] = 5
+            cycle_meta["after_caution"] = "GO"
+            status_label.config(text="LIGHT: CAUTION")
+            timer_label.config(text="TIMER: 5")
+            send_command("Y")
+            set_light("CAUTION")
             try:
-                log_reading("traffic", {"event": "phase", "phase": "GO", "cycle_id": cycle_counter["id"]})
+                log_reading("traffic", {"event": "phase", "phase": "CAUTION", "cycle_id": cycle_counter["id"]})
             except Exception:
                 pass
         update_timer()
@@ -741,6 +1057,7 @@ def traffic_light_control():
         stop_traffic_cycle()
         current_phase["state"] = "GO"
         current_phase["time_left"] = 15
+        cycle_meta["after_caution"] = "STOP"  # after yellow from GO, go to STOP
         status_label.config(text="LIGHT: GO")
         timer_label.config(text="TIMER: 15")
         send_command("G")
@@ -749,12 +1066,23 @@ def traffic_light_control():
             log_reading("traffic", {"event": "manual", "phase": "GO", "cycle_id": cycle_counter["id"]})
         except Exception:
             pass
+        try:
+            actor = CURRENT_USER.get("name") or CURRENT_USER.get("uid") or "Unknown"
+            fb_notify(f"{actor} used TMS (GO)")
+        except Exception:
+            pass
         update_timer()
 
     def caution_button():
+        # Preserve the sequence intent based on prior phase
+        prev = current_phase["state"]
         stop_traffic_cycle()
         current_phase["state"] = "CAUTION"
         current_phase["time_left"] = 5
+        if prev == "STOP":
+            cycle_meta["after_caution"] = "GO"
+        else:
+            cycle_meta["after_caution"] = "STOP"
         status_label.config(text="LIGHT: CAUTION")
         timer_label.config(text="TIMER: 5")
         send_command("Y")
@@ -763,18 +1091,29 @@ def traffic_light_control():
             log_reading("traffic", {"event": "manual", "phase": "CAUTION", "cycle_id": cycle_counter["id"]})
         except Exception:
             pass
+        try:
+            actor = CURRENT_USER.get("name") or CURRENT_USER.get("uid") or "Unknown"
+            fb_notify(f"{actor} used TMS (YELLOW)")
+        except Exception:
+            pass
         update_timer()
 
     def stop_button():
         stop_traffic_cycle()
         current_phase["state"] = "STOP"
         current_phase["time_left"] = 15
+        cycle_meta["after_caution"] = "GO"  # after yellow from STOP, go to GO
         status_label.config(text="LIGHT: STOP")
         timer_label.config(text="TIMER: 15")
         send_command("R")
         set_light("STOP")
         try:
             log_reading("traffic", {"event": "manual", "phase": "STOP", "cycle_id": cycle_counter["id"]})
+        except Exception:
+            pass
+        try:
+            actor = CURRENT_USER.get("name") or CURRENT_USER.get("uid") or "Unknown"
+            fb_notify(f"{actor} used TMS (RED)")
         except Exception:
             pass
         update_timer()
@@ -1173,7 +1512,39 @@ def distance_window():
     controls = ttk.Frame(container)
     controls.pack(pady=4)
 
+    # Unit selection and formatting helpers
+    unit_var = tk.StringVar(value="cm")  # 'cm' or 'inch'
+    last = {"cm": None}
+    AUTO_INTERVAL_MS = 200  # real-time refresh period for auto mode
+
+    def format_distance(cm):
+        try:
+            if cm is None:
+                return "--"
+            if cm < 0:
+                return "Out of range"
+            if unit_var.get() == "inch":
+                return f"{(cm / 2.54):.2f} in"
+            return f"{cm:.2f} cm"
+        except Exception:
+            return "--"
+
+    def refresh_display():
+        reading_var.set(format_distance(last["cm"]))
+
+    def on_unit_change(*_):
+        refresh_display()
+
+    # Unit selector UI
+    unit_box = ttk.Combobox(controls, textvariable=unit_var, values=["cm", "inch"], width=6, state="readonly")
+    unit_box.pack(side=tk.LEFT, padx=6)
+    try:
+        unit_var.trace_add("write", lambda *_: on_unit_change())
+    except Exception:
+        unit_var.trace("w", lambda *_: on_unit_change())
+
     auto_state = {"running": False, "job": None, "mode": "poll"}  # mode: 'stream' or 'poll'
+    stream_buf = {"buf": ""}
 
     def parse_distance_line(line):
         # Expected formats: 'Distance: 123.45 cm' or 'Distance: -1 cm'
@@ -1231,7 +1602,8 @@ def distance_window():
             dist = parse_distance_line(line)
             if dist is not None:
                 if dist < 0:
-                    reading_var.set("Out of range")
+                    last["cm"] = -1.0
+                    refresh_display()
                     status_var.set("OOR")
                     append_log("[OK] Distance: -1 cm (out of range)")
                     try:
@@ -1239,9 +1611,10 @@ def distance_window():
                     except Exception:
                         pass
                 else:
-                    reading_var.set(f"{dist:.2f} cm")
+                    last["cm"] = float(dist)
+                    refresh_display()
                     status_var.set("OK")
-                    append_log(f"[OK] {dist:.2f} cm")
+                    append_log(f"[OK] {dist:.2f} cm ({(dist/2.54):.2f} in)")
                     try:
                         log_reading("distance", {"distance": float(dist)})
                     except Exception:
@@ -1275,12 +1648,12 @@ def distance_window():
             return
         if auto_state["mode"] == "poll":
             read_once()
-            auto_state["job"] = win.after(125, auto_loop)
+            auto_state["job"] = win.after(AUTO_INTERVAL_MS, auto_loop)
         else:
-            # stream mode: read all available lines without blocking
+            # stream mode: non-blocking buffered read
             try:
                 updated = False
-                # Determine available bytes
+                # Read all currently available bytes
                 avail = 0
                 try:
                     avail = getattr(arduino, 'in_waiting', 0)
@@ -1291,52 +1664,54 @@ def distance_window():
                         avail = arduino.inWaiting()
                     except Exception:
                         avail = 0
-                # Read lines while buffer has data
-                loop_guard = 0
-                while avail > 0 and loop_guard < 50:  # guard to avoid very long loops
-                    loop_guard += 1
-                    line = arduino.readline()
-                    if not line:
-                        break
-                    if isinstance(line, bytes):
-                        line = line.decode(errors="ignore").strip()
-                    else:
-                        line = str(line).strip()
-                    dist = parse_distance_line(line)
-                    if dist is not None:
-                        updated = True
-                        if dist < 0:
-                            reading_var.set("Out of range")
-                            status_var.set("OOR")
-                            append_log("[OK] Distance: -1 cm (out of range)")
-                            try:
-                                log_reading("distance", {"distance": -1.0})
-                            except Exception:
-                                pass
-                        else:
-                            reading_var.set(f"{dist:.2f} cm")
-                            status_var.set("OK")
-                            append_log(f"[OK] {dist:.2f} cm")
-                            try:
-                                log_reading("distance", {"distance": float(dist)})
-                            except Exception:
-                                pass
-                    # update avail for next iteration
+                if avail > 0:
                     try:
-                        avail = getattr(arduino, 'in_waiting', 0)
-                        if callable(avail):
-                            avail = avail()
+                        chunk = arduino.read(avail)
+                        if isinstance(chunk, bytes):
+                            chunk = chunk.decode(errors="ignore")
+                        else:
+                            chunk = str(chunk)
                     except Exception:
-                        try:
-                            avail = arduino.inWaiting()
-                        except Exception:
-                            avail = 0
+                        chunk = ""
+                    if chunk:
+                        stream_buf["buf"] += chunk
+                        # Process complete lines
+                        while True:
+                            nl = stream_buf["buf"].find('\n')
+                            if nl < 0:
+                                break
+                            raw_line = stream_buf["buf"][:nl]
+                            stream_buf["buf"] = stream_buf["buf"][nl+1:]
+                            line = raw_line.strip()
+                            if not line:
+                                continue
+                            dist = parse_distance_line(line)
+                            if dist is not None:
+                                updated = True
+                                if dist < 0:
+                                    last["cm"] = -1.0
+                                    refresh_display()
+                                    status_var.set("OOR")
+                                    append_log("[OK] Distance: -1 cm (out of range)")
+                                    try:
+                                        log_reading("distance", {"distance": -1.0})
+                                    except Exception:
+                                        pass
+                                else:
+                                    last["cm"] = float(dist)
+                                    refresh_display()
+                                    status_var.set("OK")
+                                    append_log(f"[OK] {dist:.2f} cm ({(dist/2.54):.2f} in)")
+                                    try:
+                                        log_reading("distance", {"distance": float(dist)})
+                                    except Exception:
+                                        pass
                 if not updated:
                     status_var.set("Waiting…")
             except Exception as e:
                 status_var.set("Stream error")
                 append_log(f"[EXC] {e}")
-            auto_state["job"] = win.after(50, auto_loop)
+            auto_state["job"] = win.after(AUTO_INTERVAL_MS, auto_loop)
 
     def toggle_auto():
         if auto_state["running"]:
@@ -1355,6 +1730,10 @@ def distance_window():
                 except Exception:
                     pass
             status_var.set("Auto stopped")
+            try:
+                btn_read.config(state=tk.NORMAL)
+            except Exception:
+                pass
         else:
             if not is_serial_connected():
                 status_var.set("Not connected")
@@ -1367,13 +1746,17 @@ def distance_window():
                     arduino.reset_input_buffer()
                 except Exception:
                     pass
-                send_command('u')  # start streaming on device
+                send_command('L')  # start streaming on device (lowercase L)
                 status_var.set("Streaming…")
             except Exception:
                 auto_state["mode"] = "poll"
                 status_var.set("Auto (poll)")
             auto_state["running"] = True
             btn_auto.config(text="Stop Auto")
+            try:
+                btn_read.config(state=tk.DISABLED)
+            except Exception:
+                pass
             auto_loop()
 
     btn_read = ttk.Button(controls, text="Read Once", command=read_once, width=14)
@@ -1381,6 +1764,47 @@ def distance_window():
     btn_auto = ttk.Button(controls, text="Start Auto", command=toggle_auto, width=14)
     btn_auto.pack(side=tk.LEFT, padx=6)
     ttk.Button(controls, text="Close", command=win.destroy, width=10).pack(side=tk.LEFT, padx=6)
+
+    # Auto-start real-time streaming on open. Tries to connect if needed.
+    def start_realtime(attempt=0):
+        try:
+            if not is_serial_connected():
+                ok = init_serial(port=None)
+                if not ok:
+                    status_var.set("Waiting for serial…")
+                    # Retry with gentle backoff (max ~2s)
+                    delay = 500 if attempt < 3 else 1000 if attempt < 6 else 2000
+                    auto_state["job"] = win.after(delay, lambda: start_realtime(min(attempt + 1, 10)))
+                    return
+            # Connected: start device streaming
+            try:
+                arduino.reset_input_buffer()
+            except Exception:
+                pass
+            auto_state["mode"] = "stream"
+            send_command('L')  # start streaming on device (lowercase L)
+            status_var.set("Streaming…")
+            auto_state["running"] = True
+            try:
+                btn_auto.config(text="Stop Auto")
+                btn_read.config(state=tk.DISABLED)
+            except Exception:
+                pass
+            auto_loop()
+        except Exception:
+            # Fallback to polling if something unexpected happens
+            auto_state["mode"] = "poll"
+            auto_state["running"] = True
+            try:
+                btn_auto.config(text="Stop Auto")
+                btn_read.config(state=tk.DISABLED)
+            except Exception:
+                pass
+            status_var.set("Auto (poll)")
+            auto_loop()
+
+    # Kick off real-time streaming immediately
+    start_realtime()
 
     def on_close():
         auto_state["running"] = False
@@ -1609,6 +2033,13 @@ def accounts_window():
                         if save_authorized_uids(authorized_uids):
                             shown = f"{authorized_names.get(uid, uid)} ({uid})"
                             messagebox.showinfo("Accounts", f"User added: {shown}")
+                            # Notify via Facebook: admin added <name> "<tag>"
+                            try:
+                                admin_actor = CURRENT_USER.get("name") or CURRENT_USER.get("uid") or "Admin"
+                                display = authorized_names.get(uid, name.strip() or uid)
+                                fb_notify(f"{admin_actor} added {display} \"{uid}\"")
+                            except Exception:
+                                pass
                         else:
                             messagebox.showerror("Accounts", "Failed to save list.")
                     refresh_list()
