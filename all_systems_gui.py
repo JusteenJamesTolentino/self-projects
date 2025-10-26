@@ -782,7 +782,7 @@ def main_menu():
     def open_lock():
         lock_window()
 
-    menu_buttons.append(("LOCK AND UNLOCK", open_lock))
+    menu_buttons.append(("BINARY CALCULATOR", open_lock))
 
     def open_item_detector():
         rfid_window()
@@ -1347,14 +1347,410 @@ def humidity_temperature_window():
 
 
 def lock_window():
+    # Repurposed as: Binary Calculator window
     win = tk.Toplevel()
-    win.title("Lock / Unlock")
-    win.geometry("420x260")
+    win.title("Binary Calculator")
+    win.geometry("650x720")
     win.configure(bg=BG_COLOR)
     apply_dark_theme(win)
-    ttk.Label(win, text="Lock / Unlock System", font=("Segoe UI", 14, "bold")).pack(pady=12)
-    ttk.Label(win, text="(Placeholder)").pack(pady=20)
-    ttk.Button(win, text="Close", command=win.destroy).pack(pady=10)
+
+    ttk.Label(win, text="Binary Calculator", font=("Segoe UI", 14, "bold")).pack(pady=10)
+
+    form = ttk.Frame(win)
+    form.pack(pady=6, padx=10, fill="x")
+
+    # Inputs
+    ttk.Label(form, text="Input A").grid(row=0, column=0, sticky="w")
+    a_entry = ttk.Entry(form, width=28)
+    a_entry.grid(row=1, column=0, padx=(0, 8))
+
+    ttk.Label(form, text="Operator").grid(row=0, column=1, sticky="w")
+    op_var = tk.StringVar(value="+")
+    op_box = ttk.Combobox(form, textvariable=op_var, values=["+", "-", "*", "/"], width=5, state="readonly")
+    op_box.grid(row=1, column=1, padx=(0, 8))
+
+    ttk.Label(form, text="Input B").grid(row=0, column=2, sticky="w")
+    b_entry = ttk.Entry(form, width=28)
+    b_entry.grid(row=1, column=2, padx=(0, 8))
+
+    # Input base selector (BIN allows fractional; OCT/HEX are integers)
+    ttk.Label(form, text="Input Base").grid(row=0, column=3, sticky="w")
+    base_var = tk.StringVar(value="BIN")  # BIN | OCT | HEX
+    base_box = ttk.Combobox(form, textvariable=base_var, values=["BIN", "OCT", "HEX"], width=6, state="readonly")
+    base_box.grid(row=1, column=3, padx=(0, 8))
+
+    info = ttk.Label(win, text="Tip: BIN accepts fractional like 10001.10; OCT uses 0-7; HEX uses 0-9,A-F", font=("Segoe UI", 9))
+    info.pack(pady=(2, 2))
+
+    # Multi-line input area (one number per line)
+    ml_frame = ttk.Frame(win)
+    ml_frame.pack(padx=10, fill="x")
+    ttk.Label(ml_frame, text="Inputs (one per line)").pack(anchor="w")
+    text_container = ttk.Frame(ml_frame)
+    text_container.pack(fill="x")
+    lines_text = tk.Text(text_container, height=5, width=60, bg="#0f0f0f", fg="#e6e6e6",
+                         insertbackground=FG_COLOR, relief=tk.GROOVE)
+    lines_text.pack(side=tk.LEFT, fill="x", expand=True)
+    sb_lines = ttk.Scrollbar(text_container, command=lines_text.yview)
+    sb_lines.pack(side=tk.RIGHT, fill="y")
+    lines_text.configure(yscrollcommand=sb_lines.set)
+
+    # Keypad area for calculator-like input
+    keys_frame = ttk.Frame(win)
+    keys_frame.pack(pady=6)
+
+    def insert_char(ch: str):
+        try:
+            lines_text.insert(tk.INSERT, ch)
+        except Exception:
+            pass
+
+    def backspace():
+        try:
+            idx = lines_text.index(tk.INSERT)
+            if idx and idx != "1.0":
+                lines_text.delete(f"{idx} -1c", idx)
+        except Exception:
+            pass
+
+    def newline():
+        insert_char("\n")
+
+    def clear_all():
+        try:
+            lines_text.delete("1.0", tk.END)
+        except Exception:
+            pass
+
+    def rebuild_keypad():
+        for w in keys_frame.winfo_children():
+            try:
+                w.destroy()
+            except Exception:
+                pass
+        base = (base_var.get() or "BIN").upper()
+        rows = []
+        if base == "BIN":
+            rows = [["1", "0", "."],
+                    ["+", "-", "*"],
+                    ["/", "BS", "NL"],
+                    ["CLR"]]
+        elif base == "OCT":
+            rows = [["7", "6", "5"],
+                    ["4", "3", "2"],
+                    ["1", "0", "."],
+                    ["BS", "NL", "CLR"]]
+        else:  # HEX
+            rows = [["F", "E", "D"],
+                    ["C", "B", "A"],
+                    ["9", "8", "7"],
+                    ["6", "5", "4"],
+                    ["3", "2", "1"],
+                    ["0", ".", "BS"],
+                    ["NL", "CLR"]]
+        # Build grid
+        for r, row in enumerate(rows):
+            rf = ttk.Frame(keys_frame)
+            rf.pack()
+            for c, lab in enumerate(row):
+                def make_cmd(label=lab):
+                    if label == "BS":
+                        return backspace
+                    if label == "NL":
+                        return newline
+                    if label == "CLR":
+                        return clear_all
+                    def _():
+                        insert_char(label)
+                    return _
+                ttk.Button(rf, text=lab, width=6, command=make_cmd()).pack(side=tk.LEFT, padx=3, pady=2)
+
+    # Build keypad initially and on base change
+    rebuild_keypad()
+
+    # Outputs
+    out_frame = ttk.Frame(win)
+    out_frame.pack(pady=8, padx=10, fill="x")
+
+    ttk.Label(out_frame, text="Decimal (4-digit)", width=18).grid(row=0, column=0, sticky="w")
+    dec_val = ttk.Label(out_frame, text="----", width=10)
+    dec_val.grid(row=0, column=1, sticky="w")
+
+    ttk.Label(out_frame, text="Hex (4-digit)", width=18).grid(row=1, column=0, sticky="w")
+    hex_val = ttk.Label(out_frame, text="----", width=10)
+    hex_val.grid(row=1, column=1, sticky="w")
+
+    ttk.Label(out_frame, text="Octal (4-digit)", width=18).grid(row=2, column=0, sticky="w")
+    oct_val = ttk.Label(out_frame, text="----", width=10)
+    oct_val.grid(row=2, column=1, sticky="w")
+
+    # Arduino display mode selector
+    mode_frame = ttk.Frame(win)
+    mode_frame.pack(pady=(2, 0))
+    ttk.Label(mode_frame, text="Arduino Display Mode:").pack(side=tk.LEFT, padx=(0, 6))
+    mode_var = tk.StringVar(value="DEC")  # DEC | OCT | HEX
+    mode_box = ttk.Combobox(mode_frame, textvariable=mode_var, values=["DEC", "OCT", "HEX"], width=6, state="readonly")
+    mode_box.pack(side=tk.LEFT)
+
+    status = ttk.Label(win, text="", foreground="#bfc7d6")
+    status.pack(pady=(0, 6))
+
+    def is_valid_in_base(s: str, base: str) -> bool:
+        if not s:
+            return False
+        t = s.strip().upper()
+        if t.count('.') > 1:
+            return False
+        if base == "BIN":
+            allowed = set("01")
+        elif base == "OCT":
+            allowed = set("01234567")
+        else:  # HEX
+            allowed = set("0123456789ABCDEF")
+        for ch in t:
+            if ch == '.':
+                continue
+            if ch not in allowed:
+                return False
+        return True
+
+    def parse_binary_to_float(s: str) -> float:
+        s = s.strip()
+        if '.' in s:
+            ip, fp = s.split('.')
+        else:
+            ip, fp = s, ''
+        # integer part
+        ival = 0
+        for ch in ip:
+            ival = (ival << 1) + (1 if ch == '1' else 0)
+        # fractional part
+        fval = 0.0
+        denom = 2.0
+        for ch in fp:
+            if ch == '1':
+                fval += 1.0 / denom
+            denom *= 2.0
+        return ival + fval
+
+    def parse_positional_with_fraction(s: str, chars: str, base_val: int) -> float:
+        t = s.strip().upper()
+        if '.' in t:
+            ip, fp = t.split('.', 1)
+        else:
+            ip, fp = t, ''
+        iv = int(ip, base_val) if ip else 0
+        fval = 0.0
+        denom = float(base_val)
+        for ch in fp:
+            if ch not in chars:
+                break
+            digit = chars.index(ch)
+            fval += digit / denom
+            denom *= base_val
+        return iv + (fval if iv >= 0 else -fval)
+
+    def parse_to_float(s: str, base: str) -> float:
+        if base == "BIN":
+            return parse_binary_to_float(s)
+        elif base == "OCT":
+            return parse_positional_with_fraction(s, "01234567", 8)
+        else:
+            return parse_positional_with_fraction(s, "0123456789ABCDEF", 16)
+
+    def round_half_away_from_zero(x: float) -> int:
+        if x >= 0:
+            return int(x + 0.5)
+        else:
+            return int(x - 0.5)
+
+    def fmt_decimal_4(n: int) -> str:
+        if n < 0:
+            n = 0
+        if n > 9999:
+            n = 9999
+        return f"{n:04d}"
+
+    def fmt_hex_4(n: int) -> str:
+        if n < 0:
+            n = 0
+        s = f"{n:X}"
+        if len(s) < 4:
+            s = s.zfill(4)
+        elif len(s) > 4:
+            s = s[-4:]
+        return s
+
+    def fmt_oct_4(n: int) -> str:
+        if n < 0:
+            n = 0
+        s = format(n, 'o')
+        if len(s) < 4:
+            s = s.zfill(4)
+        elif len(s) > 4:
+            s = s[-4:]
+        return s
+
+    current_result = {"n": None, "f": None}
+
+    def update_hint(*_):
+        b = (base_var.get() or "BIN").upper()
+        if b == "BIN":
+            info.config(text="Tip: BIN accepts fractional like 10001.10; use digits 0/1")
+        elif b == "OCT":
+            info.config(text="Tip: OCT accepts fractional with '.'; digits 0-7")
+        else:
+            info.config(text="Tip: HEX accepts fractional with '.'; digits 0-9 and A-F")
+    try:
+        base_var.trace_add("write", update_hint)
+    except Exception:
+        base_var.trace("w", update_hint)
+    # also rebuild keypad when base changes
+    try:
+        base_var.trace_add("write", lambda *_: rebuild_keypad())
+    except Exception:
+        base_var.trace("w", lambda *_: rebuild_keypad())
+
+    def compute():
+        op = op_var.get()
+        base = (base_var.get() or "BIN").upper()
+
+        # Prefer multi-line inputs when available
+        lines_raw = lines_text.get("1.0", tk.END).splitlines()
+        values = [ln.strip() for ln in lines_raw if ln.strip()]
+
+        nums = []
+        if len(values) >= 2:
+            # Validate and parse each line
+            for ln in values:
+                if not is_valid_in_base(ln, base):
+                    if base == "BIN":
+                        status.config(text=f"Error: '{ln}' not valid BIN (digits 0/1 with optional '.')", foreground="#ff6b6b")
+                    elif base == "OCT":
+                        status.config(text=f"Error: '{ln}' not valid OCT (digits 0-7 with optional '.')", foreground="#ff6b6b")
+                    else:
+                        status.config(text=f"Error: '{ln}' not valid HEX (digits 0-9,A-F with optional '.')", foreground="#ff6b6b")
+                    return
+                try:
+                    nums.append(parse_to_float(ln, base))
+                except Exception:
+                    status.config(text=f"Parse error on line: {ln}", foreground="#ff6b6b")
+                    return
+            # Fold values using operator
+            try:
+                res = nums[0]
+                if op == '+':
+                    for x in nums[1:]:
+                        res += x
+                elif op == '-':
+                    for x in nums[1:]:
+                        res -= x
+                elif op == '*':
+                    for x in nums[1:]:
+                        res *= x
+                else:
+                    for x in nums[1:]:
+                        if x == 0:
+                            status.config(text="Error: Division by zero.", foreground="#ff6b6b")
+                            return
+                        res /= x
+            except Exception:
+                status.config(text="Computation error.", foreground="#ff6b6b")
+                return
+        else:
+            # Fallback to two single-line entries
+            a = a_entry.get().strip()
+            b = b_entry.get().strip()
+            if not is_valid_in_base(a, base) or not is_valid_in_base(b, base):
+                if base == "BIN":
+                    status.config(text="Error: BIN allows digits 0/1 with at most one '.'", foreground="#ff6b6b")
+                elif base == "OCT":
+                    status.config(text="Error: OCT allows digits 0-7 with at most one '.'", foreground="#ff6b6b")
+                else:
+                    status.config(text="Error: HEX allows digits 0-9 and A-F with at most one '.'", foreground="#ff6b6b")
+                return
+            try:
+                av = parse_to_float(a, base)
+                bv = parse_to_float(b, base)
+            except Exception:
+                status.config(text="Error parsing inputs for selected base.", foreground="#ff6b6b")
+                return
+            try:
+                if op == '+':
+                    res = av + bv
+                elif op == '-':
+                    res = av - bv
+                elif op == '*':
+                    res = av * bv
+                else:  # '/'
+                    if bv == 0:
+                        status.config(text="Error: Division by zero.", foreground="#ff6b6b")
+                        return
+                    res = av / bv
+            except Exception:
+                status.config(text="Computation error.", foreground="#ff6b6b")
+                return
+
+        n = round_half_away_from_zero(res)
+        current_result["n"] = n
+        try:
+            current_result["f"] = float(res)
+        except Exception:
+            current_result["f"] = None
+
+        # Prepare 4-digit formatted outputs
+        dec_s = fmt_decimal_4(abs(n))
+        hex_s = fmt_hex_4(abs(n))
+        oct_s = fmt_oct_4(abs(n))
+
+        dec_val.config(text=dec_s)
+        hex_val.config(text=hex_s)
+        oct_val.config(text=oct_s)
+
+        msg = "Rounded to nearest int. Shown as 4-digit DEC/HEX/OCT."
+        if n < 0:
+            msg += " Negative result displayed as absolute value."
+        status.config(text=msg, foreground="#bfc7d6")
+
+    def send_to_arduino():
+        # Ensure we have a computed result
+        if current_result["n"] is None:
+            status.config(text="Compute a result first.", foreground="#ffb74d")
+            return
+        # Connect if needed
+        if not is_serial_connected():
+            ok = init_serial(port=None)
+            if not ok:
+                status.config(text="Serial not connected. Could not auto-connect.", foreground="#ff6b6b")
+                return
+        # Prepare commands
+        mode = (mode_var.get() or "DEC").upper()
+        # Prefer sending the float for DEC mode so Arduino can show decimal point
+        val_str = None
+        if mode == "DEC" and current_result.get("f") is not None:
+            try:
+                val_str = f"{abs(float(current_result['f'])):.3f}"
+            except Exception:
+                val_str = str(abs(int(current_result["n"])))
+        else:
+            val_str = str(abs(int(current_result["n"])))
+        # Switch mode, then set value (newline-terminated so Arduino reads a full command)
+        try:
+            send_command(f"{mode}\n")
+            # small pacing is handled by serialEvent loop; still, send as separate lines
+            send_command(f"SET {val_str}\n")
+            status.config(text=f"Sent to Arduino: {mode}, SET {val_str}", foreground="#8bd17c")
+        except Exception as e:
+            status.config(text=f"Send failed: {e}", foreground="#ff6b6b")
+
+    btns = ttk.Frame(win)
+    btns.pack(pady=8)
+    ttk.Button(btns, text="Compute", command=compute, width=14).pack(side=tk.LEFT, padx=6)
+    ttk.Button(btns, text="Send to Arduino", command=send_to_arduino, width=18).pack(side=tk.LEFT, padx=6)
+    ttk.Button(btns, text="Close", command=win.destroy, width=10).pack(side=tk.LEFT, padx=6)
+
+    # Initial focus
+    a_entry.focus_set()
 
 def rfid_window():
     import tkinter as tk, threading, time
