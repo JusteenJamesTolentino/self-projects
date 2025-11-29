@@ -1,0 +1,764 @@
+from tkinter import *
+from tkinter import messagebox
+from datetime import datetime
+import random, os, sys
+import tempfile, smtplib
+from email.message import EmailMessage
+from pathlib import Path
+
+
+loggedIn = FALSE
+
+try:
+    from fpdf import FPDF #pip3 install fpdf2
+    _HAVE_FPDF = True
+except Exception:
+    _HAVE_FPDF = False
+
+
+def _set_window_icon(win):
+    base = Path(__file__).parent
+    ico = base / "icon.ico"
+    png = base / "icon.png"
+    try:
+        if sys.platform.startswith("win") and ico.exists():
+            win.iconbitmap(str(ico))
+        elif png.exists():
+            try:
+                img = PhotoImage(file=str(png))
+                win.iconphoto(False, img)
+                win._icon_image_ref = img
+            except Exception as e:
+                print(f"PNG icon load failed: {e}")
+        else:
+            pass
+    except Exception as e:
+        print(f"Icon assignment failed: {e}")
+
+if loggedIn==FALSE:
+    auth = Tk()
+    auth.title("Login")
+    auth.geometry("300x300")
+    auth.configure(background="#2f2f2f")
+    auth.resizable(FALSE, FALSE)
+
+    try:
+        auth.iconbitmap("icon.ico")
+    except Exception as e:
+        _set_window_icon(auth)
+
+    headinglabel = Label(auth, text='Login System', font=('times new roman', 15, 'bold'), bg='gray10',fg='gold', bd=10, relief=RAISED)
+    headinglabel.pack(fill=X, pady=20)
+
+    usernameentry = Entry(auth, font=('times new roman', 15), bd=5, width=18)
+    usernameentry.pack(padx=20, pady=10)
+    usernameentry.insert(0,"Username")
+    usernameentry.focus_set()
+
+    passwordentry = Entry(auth, show="*" ,font=('times new roman', 15), bd=5, width=18)
+    passwordentry.pack(padx=20, pady=10)
+    passwordentry.insert(0,"Password")
+
+    attempts_state = {'count': 0}
+
+    def sysAuth():
+
+        if usernameentry.get() == "justeen" and passwordentry.get() == "justeen":
+            auth.destroy()
+
+
+            def clear():
+                for entry in (
+                    bathsoapentry, facecreamentry, facewashentry, bodylotionentry,
+                    lipbalmentry, shampooentry,
+                    wheatentry, riceentry, oatsentry, oliveoilentry, gheeentry, sugarentry,
+                    redbullentry, pepsientry, cocacolaentry, monsterentry, limcaentry, mountaindewentry,
+                ):
+                    entry.delete(0, END)
+                    entry.insert(0, 0)
+
+            
+                for entry in (
+                    cosmetictaxentry, grocerytaxentry, beveragestaxentry,
+                    cosmeticpriceentry, grocerypriceentry, beveragespriceentry,
+                ):
+                    entry.delete(0, END)
+
+            
+                for entry in (nameentry, phoneentry, billnumberentry):
+                    entry.delete(0, END)
+
+            
+                textarea.delete(1.0, END)
+
+            def sendemail():
+                def send_gmail():
+                    sender = senderentry.get().strip()
+                    passwd = passwordentry.get().strip()
+                    recipient = recieverentry.get().strip()
+                    subject = subjectentry.get().strip()
+                    if not sender or not passwd or not recipient:
+                        messagebox.showerror('Error', 'Sender, password and recipient are required', parent=root1)
+                        return
+                    try:
+                        msg = EmailMessage()
+                        msg['From'] = sender
+                        msg['To'] = recipient
+                        msg['Subject'] = subject or 'Retail Bill'
+                        msg.set_content(email_textarea.get(1.0, END))
+
+                        with smtplib.SMTP('smtp.gmail.com', 587, timeout=20) as ob:
+                            ob.ehlo()
+                            ob.starttls()
+                            ob.ehlo()
+                            ob.login(sender, passwd)
+                            ob.send_message(msg)
+                        messagebox.showinfo('Success', 'Bill email sent successfully', parent=root1)
+                        root1.destroy()
+                    except smtplib.SMTPAuthenticationError:
+                        messagebox.showerror('Auth Error', 'Authentication failed. For Gmail, use an App Password.', parent=root1)
+                    except Exception as e:
+                        messagebox.showerror('Error', f'Sending failed: {e}', parent=root1)
+
+                if textarea.get(1.0, END).strip() == '':
+                    messagebox.showerror('Error', 'Bill is empty')
+                else:
+                    root1 = Toplevel()
+                    root1.grab_set()
+                    root1.title('Send E-Mail')
+                    root1.config(bg='gray20')
+                    root1.resizable(0, 0)
+
+                    senderframe = LabelFrame(root1, text='SENDER', font=('times new roman', 16, 'bold'), bd=6,bg='gray20', fg='white')
+                    senderframe.grid(row=0, column=0, padx=40, pady=20)
+
+                    senderlabel = Label(senderframe, text="SENDER's E-MAIL", font=('times new roman', 15, 'bold'),bg='gray20', fg='white')
+                    senderlabel.grid(row=0, column=0, padx=10, pady=8)
+
+                    senderentry = Entry(senderframe, font=('times new roman', 14, 'bold'), bd=4, width=24,relief=RAISED)
+                    senderentry.grid(row=0, column=1, padx=10, pady=8)
+
+                    passwordlabel = Label(senderframe, text="APP PASSWORD", font=('times new roman', 15, 'bold'),bg='gray20', fg='white')
+                    passwordlabel.grid(row=1, column=0, padx=10, pady=8)
+
+                    passwordentry = Entry(senderframe, font=('times new roman', 14, 'bold'), bd=4, width=24,relief=RAISED, show='*')
+                    passwordentry.grid(row=1, column=1, padx=10, pady=8)
+
+                    recipientframe = LabelFrame(root1, text='RECIPIENT', font=('times new roman', 16, 'bold'), bd=6,bg='gray20', fg='white')
+                    recipientframe.grid(row=1, column=0, padx=40, pady=20)
+
+                    recieverlabel = Label(recipientframe, text="E-MAIL", font=('times new roman', 15, 'bold'),bg='gray20', fg='white')
+                    recieverlabel.grid(row=0, column=0, padx=10, pady=8)
+
+                    recieverentry = Entry(recipientframe, font=('times new roman', 14, 'bold'), bd=4, width=24,relief=RAISED)
+                    recieverentry.grid(row=0, column=1, padx=10, pady=8)
+
+                    subjectlabel = Label(recipientframe, text="SUBJECT", font=('times new roman', 15, 'bold'), bg='gray20', fg='white')
+                    subjectlabel.grid(row=1, column=0, padx=10, pady=8)
+                    subjectentry = Entry(recipientframe, font=('times new roman', 14, 'bold'), bd=4, width=24, relief=RAISED)
+                    subjectentry.grid(row=1, column=1, padx=10, pady=8)
+
+                    messagelabel = Label(recipientframe, text="MESSAGE", font=('times new roman', 15, 'bold'),bg='gray20', fg='white')
+                    messagelabel.grid(row=2, column=0, padx=10, pady=8, columnspan=2)
+
+                    email_textarea = Text(recipientframe, font=('times new roman', 15, 'bold'), bd=2, relief=RAISED,width=48, height=14)
+                    email_textarea.grid(row=3, column=0, columnspan=2, padx=10, pady=8)
+                    email_textarea.delete(1.0, END)
+                    email_textarea.insert(END, textarea.get(1.0, END).replace('-', ''))
+
+                    sendbutton = Button(root1, text='SEND', font=('times new roman', 16, 'bold'), width=15, command=send_gmail)
+                    sendbutton.grid(row=2, column=0, pady=20)
+                    root1.mainloop()
+
+            def printbill():
+                if textarea.get(1.0, END).strip() == '':
+                    messagebox.showerror('Error', 'Bill is empty')
+                    return
+
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.txt')
+                try:
+                    with open(tmp.name, 'w', encoding='utf-8') as f:
+                        f.write(textarea.get(1.0, END))
+                except Exception as e:
+                    messagebox.showerror('Error', f'Failed to write temp file: {e}')
+                    return
+
+
+                if sys.platform.startswith('win'):
+                    try:
+                        os.startfile(tmp.name, 'print') 
+                        messagebox.showinfo('Print', 'Sent to printer')
+                    except Exception as e:
+                        messagebox.showerror('Print Error', f'Could not print: {e}')
+                else:
+
+                    import subprocess
+                    try:
+                        subprocess.run(['lpr', tmp.name], check=True)
+                        messagebox.showinfo('Print', 'Sent to printer via lpr')
+                    except Exception:
+
+                        try:
+                            subprocess.run(['xdg-open', tmp.name], check=True)
+                            messagebox.showinfo('Print', 'Opened bill file; use system print dialog.')
+                        except Exception as e:
+                            messagebox.showerror('Print Error', f'Could not print: {e}')
+
+            def export_pdf():
+
+                if textarea.get(1.0, END).strip() == '':
+                    messagebox.showerror('Error', 'Bill is empty')
+                    return
+                if not _HAVE_FPDF:
+                    messagebox.showerror('Missing Dependency', 'fpdf2 not installed. Activate venv and run:\n"pip install fpdf2"')
+                    return
+                bills_pdf_dir = os.path.join('bills', 'pdf')
+                try:
+                    os.makedirs(bills_pdf_dir, exist_ok=True)
+                except Exception as e:
+                    messagebox.showerror('Error', f'Could not create bills directory: {e}')
+                    return
+                bn = billnumberentry.get().strip() or str(billnumber)
+                pdf_path = os.path.join(bills_pdf_dir, f"{bn}.pdf")
+                content_lines = textarea.get(1.0, END).rstrip('\n').splitlines()
+                try:
+                    pdf = FPDF()
+                    pdf.set_auto_page_break(auto=True, margin=15)
+                    pdf.add_page()
+
+                    pdf.set_font('Courier', size=11)
+                    for line in content_lines:
+
+                        if len(line) <= 90:
+                            pdf.cell(0, 6, line, ln=1)
+                        else:
+                            start = 0
+                            while start < len(line):
+                                pdf.cell(0, 6, line[start:start+90], ln=1)
+                                start += 90
+                    pdf.output(pdf_path)
+                    messagebox.showinfo('PDF Export', f'Bill saved to {pdf_path}')
+                except Exception as e:
+                    messagebox.showerror('Error', f'PDF export failed: {e}')
+
+            def searchbill():
+                # Search by Bill No. entered
+                query = billnumberentry.get().strip()
+                if query == '':
+                    messagebox.showerror('Error', 'Please enter a bill number to search')
+                    return
+
+                bills_txt_dir = os.path.join('bills', 'txt')
+                if not os.path.isdir(bills_txt_dir):
+                    messagebox.showerror('Error', f'No bills directory found: {bills_txt_dir}')
+                    return
+
+                found = False
+                for fname in os.listdir(bills_txt_dir):
+                    name, ext = os.path.splitext(fname)
+                    if name == query and ext.lower() in ('.txt', '.log', ''):
+                        path = os.path.join(bills_txt_dir, fname)
+                        try:
+                            # Try UTF-8 first
+                            with open(path, 'r', encoding='utf-8') as f:
+                                content = f.read()
+                        except UnicodeDecodeError:
+                            try:
+                                # Fallback to latin-1 to accommodate legacy text
+                                with open(path, 'r', encoding='latin-1', errors='replace') as f:
+                                    content = f.read()
+                            except Exception as e:
+                                messagebox.showerror('Error', f'Could not read bill with fallback: {e}')
+                                return
+                        except Exception as e:
+                            messagebox.showerror('Error', f'Could not read bill: {e}')
+                            return
+
+                        textarea.delete(1.0, END)
+                        textarea.insert(END, content)
+                        found = True
+                        break
+
+                if not found:
+                    messagebox.showerror('Error', 'Bill not found')
+
+            def savebill():
+                content = textarea.get(1.0, END).strip()
+                if content == '':
+                    messagebox.showerror('Error', 'There is no bill to save')
+                    return
+
+                bills_txt_dir = os.path.join('bills', 'txt')
+                try:
+                    os.makedirs(bills_txt_dir, exist_ok=True)
+                except Exception as e:
+                    messagebox.showerror('Error', f'Could not create bills directory: {e}')
+                    return
+
+                bn = billnumberentry.get().strip() if billnumberentry.get().strip() != '' else str(billnumber)
+                filename = os.path.join(bills_txt_dir, f"{bn}.txt")
+                try:
+                    with open(filename, 'w', encoding='utf-8') as f:
+                        f.write(textarea.get(1.0, END))
+                    messagebox.showinfo('Saved', f'Bill saved as {filename}')
+                except Exception as e:
+                    messagebox.showerror('Error', f'Could not save bill: {e}')
+
+            billnumber = random.randint(500, 1000)
+
+            def total():
+                global soapprice, facecreamprice, facewashprice, shampooprice, bodylotionprice, lipbalmprice, riceprice, oliveoilprice, oatsprice, wheatprice, gheeprice, sugarprice, cocacolaprice, limcaprice, pepsiprice, monsterenergyprice, redbullprice, mountaindewprice, totalbill
+                # COSMETICS PRICE EVALUATION
+                soapprice = int(bathsoapentry.get()) * 80
+                facecreamprice = int(facecreamentry.get()) * 140
+                facewashprice = int(facewashentry.get()) * 210
+                shampooprice = int(shampooentry.get()) * 40
+                bodylotionprice = int(bodylotionentry.get()) * 350
+                lipbalmprice = int(lipbalmentry.get()) * 20
+
+                totalcosmeticprice = soapprice + facecreamprice + facewashprice + shampooprice + bodylotionprice + lipbalmprice
+                cosmeticpriceentry.delete(0, END)
+                cosmeticpriceentry.insert(0, f"{totalcosmeticprice}")
+                cosmetictax = totalcosmeticprice * 0.12
+                cosmetictaxentry.delete(0, END)
+                cosmetictaxentry.insert(0, f"{cosmetictax}")
+
+                # GROCERY PRICE EVALUATION
+                riceprice = int(riceentry.get()) * 65
+                oliveoilprice = int(oliveoilentry.get()) * 650
+                oatsprice = int(oatsentry.get()) * 170
+                wheatprice = int(wheatentry.get()) * 110
+                gheeprice = int(gheeentry.get()) * 275
+                sugarprice = int(sugarentry.get()) * 60
+
+                totalgroceryprice = riceprice + oliveoilprice + oatsprice + wheatprice + gheeprice + sugarprice
+                grocerypriceentry.delete(0, END)
+                grocerypriceentry.insert(0, f"{totalgroceryprice}")
+                grocerytax = totalgroceryprice * 0.05
+                grocerytaxentry.delete(0, END)
+                grocerytaxentry.insert(0, f"{grocerytax}")
+
+                # BEVERAGES PRICE EVALUATION
+                cocacolaprice = int(cocacolaentry.get()) * 40
+                limcaprice = int(limcaentry.get()) * 20
+                pepsiprice = int(pepsientry.get()) * 75
+                mountaindewprice = int(mountaindewentry.get()) * 40
+                monsterenergyprice = int(monsterentry.get()) * 160
+                redbullprice = int(redbullentry.get()) * 120
+
+                totalbeveragesprice = cocacolaprice + limcaprice + pepsiprice + mountaindewprice + monsterenergyprice + redbullprice
+                beveragespriceentry.delete(0, END)
+                beveragespriceentry.insert(0, f"{totalbeveragesprice}")
+                beveragestax = totalbeveragesprice * 0.08
+                beveragestaxentry.delete(0, END)
+                beveragestaxentry.insert(0, f"{beveragestax}")
+
+                totalbill = totalcosmeticprice + totalgroceryprice + totalbeveragesprice + cosmetictax + grocerytax + beveragestax
+
+            def billarea():
+                textarea.delete(1.0, END)
+                if nameentry.get() == '' or phoneentry.get() == '':
+                    messagebox.showerror('Error!', 'Customer Details Are Required')
+                    return
+                if (cosmeticpriceentry.get() == '' and grocerypriceentry.get() == '' and beveragespriceentry.get() == '') or \
+                   (cosmeticpriceentry.get() == '0 Rs.' and grocerypriceentry.get() == '0 Rs.' and beveragespriceentry.get() == '0 Rs.'):
+                    messagebox.showerror('Error!', 'No Products Are Selected')
+                    return
+
+                # populate bill number entry
+                try:
+                    billnumberentry.delete(0, END)
+                    billnumberentry.insert(0, str(billnumber))
+                except Exception:
+                    pass
+
+                # Helper for aligned lines
+                def line(prod, qty, price):
+                    return f"{prod:<18}{qty:>10}{price:>12}"
+
+                textarea.insert(END, '** WELCOME CUSTOMER **\n')
+                textarea.insert(END, f'BILL NUMBER : {billnumber}\n')
+                textarea.insert(END, f'CUSTOMER NAME : {nameentry.get()}\n')
+                textarea.insert(END, f'PHONE NUMBER : {phoneentry.get()}\n')
+                textarea.insert(END, f'DATE: {datetime.now().strftime("%d/%m/%Y %H:%M:%S")}\n')
+                textarea.insert(END, '-' * 40 + '\n')
+                textarea.insert(END, line('PRODUCT', 'QTY', 'PRICE') + '\n')
+                textarea.insert(END, '-' * 40)
+
+                # COSMETICS
+                if int(bathsoapentry.get()) != 0:
+                    textarea.insert(END, '\n' + line('BATH SOAP', bathsoapentry.get(), soapprice))
+                if int(facecreamentry.get()) != 0:
+                    textarea.insert(END, '\n' + line('FACE CREAM', facecreamentry.get(), facecreamprice))
+                if int(facewashentry.get()) != 0:
+                    textarea.insert(END, '\n' + line('FACE WASH', facewashentry.get(), facewashprice))
+                if int(shampooentry.get()) != 0:
+                    textarea.insert(END, '\n' + line('SHAMPOO', shampooentry.get(), shampooprice))
+                if int(bodylotionentry.get()) != 0:
+                    textarea.insert(END, '\n' + line('BODY LOTION', bodylotionentry.get(), bodylotionprice))
+                if int(lipbalmentry.get()) != 0:
+                    textarea.insert(END, '\n' + line('LIP BALM', lipbalmentry.get(), lipbalmprice))
+
+                # GROCERY
+                if int(riceentry.get()) != 0:
+                    textarea.insert(END, '\n' + line('RICE', riceentry.get(), riceprice))
+                if int(oliveoilentry.get()) != 0:
+                    textarea.insert(END, '\n' + line('OLIVE OIL', oliveoilentry.get(), oliveoilprice))
+                if int(oatsentry.get()) != 0:
+                    textarea.insert(END, '\n' + line('OATS', oatsentry.get(), oatsprice))
+                if int(wheatentry.get()) != 0:
+                    textarea.insert(END, '\n' + line('WHEAT', wheatentry.get(), wheatprice))
+                if int(gheeentry.get()) != 0:
+                    textarea.insert(END, '\n' + line('GHEE', gheeentry.get(), gheeprice))
+                if int(sugarentry.get()) != 0:
+                    textarea.insert(END, '\n' + line('SUGAR', sugarentry.get(), sugarprice))
+
+                # BEVERAGES
+                if int(cocacolaentry.get()) != 0:
+                    textarea.insert(END, '\n' + line('COCA COLA', cocacolaentry.get(), cocacolaprice))
+                if int(limcaentry.get()) != 0:
+                    textarea.insert(END, '\n' + line('LIMCA', limcaentry.get(), limcaprice))
+                if int(pepsientry.get()) != 0:
+                    textarea.insert(END, '\n' + line('PEPSI', pepsientry.get(), pepsiprice))
+                if int(mountaindewentry.get()) != 0:
+                    textarea.insert(END, '\n' + line('MOUNTAIN DEW', mountaindewentry.get(), mountaindewprice))
+                if int(monsterentry.get()) != 0:
+                    textarea.insert(END, '\n' + line('MONSTER ENERGY', monsterentry.get(), monsterenergyprice))
+                if int(redbullentry.get()) != 0:
+                    textarea.insert(END, '\n' + line('RED BULL', redbullentry.get(), redbullprice))
+
+                textarea.insert(END, '\n' + '-' * 40 + '\n')
+                def tax_line(label, value):
+                    return f"{label:<18}{'':>10}{value:>12}"
+                if cosmetictaxentry.get() != '0.0 Rs.':
+                    textarea.insert(END, tax_line('COSMETIC TAX', cosmetictaxentry.get()) + '\n')
+                if grocerytaxentry.get() != '0.0 Rs.':
+                    textarea.insert(END, tax_line('GROCERY TAX', grocerytaxentry.get()) + '\n')
+                if beveragestaxentry.get() != '0.0 Rs.':
+                    textarea.insert(END, tax_line('BEVERAGES TAX', beveragestaxentry.get()) + '\n')
+
+                textarea.insert(END, tax_line('TOTAL BILL', totalbill) + '\n')
+                textarea.insert(END, '-' * 40 + '\n')
+
+                savebill()
+
+            root = Tk()
+            root.title('Purchase Ordering System')
+            root.geometry('1370x785')
+            root.configure(background='#2f2f2f')
+            root.resizable(False, False)
+
+            try:
+                auth.iconbitmap("icon.ico")
+            except Exception as e:
+                _set_window_icon(root)
+
+            try:
+                root.attributes('-fullscreen', True)
+            except Exception:
+                try:
+                    root.state('zoomed')
+                except Exception:
+                    pass
+            def _toggle_fullscreen(event=None):
+                try:
+                    current = bool(root.attributes('-fullscreen'))
+                    root.attributes('-fullscreen', not current)
+                except Exception:
+                    pass
+            def _exit_fullscreen(event=None):
+                try:
+                    root.attributes('-fullscreen', False)
+                except Exception:
+                    pass
+            root.bind('<F11>', _toggle_fullscreen)
+            root.bind('<Escape>', _exit_fullscreen)
+            # Header frame with title and Sign Out button
+            headerframe = Frame(root, bg='gray10')
+            headerframe.pack(fill=X, pady=10)
+            headinglabel = Label(headerframe, text='Purchase Ordering System', font=('times new roman', 30, 'bold'), bg='gray10', fg='gold', bd=10, relief=RAISED)
+            headinglabel.pack(side=LEFT, fill=X, expand=True)
+            
+            def sign_out():
+                if messagebox.askyesno('Sign Out', 'Do you want to sign out?'):
+                    try:
+                        root.destroy()
+                    finally:
+                        os.execl(sys.executable, sys.executable, __file__)
+            
+            header_signout_btn = Button(headerframe, text='Sign Out', font=('times new roman', 15, 'bold'), bg='gray10', fg='white', bd=6, width=10, command=sign_out)
+            header_signout_btn.pack(side=RIGHT, padx=10)
+            customer_details_frame = LabelFrame(root, text='Customer Details', font=('times new roman', 15, 'bold'),bg='gray10', fg='gold', bd=8, relief=RAISED)
+            customer_details_frame.pack(fill=X)
+
+            namelabel = Label(customer_details_frame, text='Name', font=('times new roman', 15, 'bold'), bg='gray10',fg='white')
+            namelabel.grid(row=0, column=0, padx=20)
+
+            nameentry = Entry(customer_details_frame, font=('times new roman', 15), bd=8, width=18)
+            nameentry.grid(row=0, column=1, padx=8)
+
+            phonelabel = Label(customer_details_frame, text='Phone No.', font=('times new roman', 15, 'bold'),bg='gray10', fg='white')
+            phonelabel.grid(row=0, column=2, padx=20, pady=4)
+
+            phoneentry = Entry(customer_details_frame, bd=8, width=18)
+            phoneentry.grid(row=0, column=3, padx=8)
+            billnumberlabel = Label(customer_details_frame, text='Bill No.', font=('times new roman', 15, 'bold'),bg='gray10', fg='white')
+            billnumberlabel.grid(row=0, column=4, padx=20, pady=4)
+
+            billnumberentry = Entry(customer_details_frame, font=('times new roman', 15), bd=8, width=18)
+            billnumberentry.grid(row=0, column=5, padx=8)
+            searchButton = Button(customer_details_frame, text='SEARCH', font=('times new roman', 15, 'bold'), bd=6,command=searchbill)
+            searchButton.grid(row=0, column=6, padx=12, pady=8)
+            pdfTopButton = Button(customer_details_frame, text='PDF', font=('times new roman', 15, 'bold'), bd=6, command=export_pdf)
+            pdfTopButton.grid(row=0, column=7, padx=12, pady=8)
+
+            productsframe = Frame(root)
+            productsframe.pack(fill=BOTH, expand=1)
+            # Make product columns expand to use full height in fullscreen
+            productsframe.grid_columnconfigure(0, weight=0)
+            productsframe.grid_columnconfigure(1, weight=0)
+            productsframe.grid_columnconfigure(2, weight=0)
+            productsframe.grid_columnconfigure(3, weight=1)
+            productsframe.grid_rowconfigure(0, weight=1)
+
+            cosmeticsframe = LabelFrame(productsframe, text='Cosmetics', font=('times new roman', 15, 'bold'), bg='gray10', fg='gold', bd=8, relief=RAISED)
+            cosmeticsframe.grid(row=0, column=0, pady=6, sticky='nsew')
+
+            bathsoaplabel = Label(cosmeticsframe, text='Bath Soap', font=('times new roman', 15, 'bold'), bg='gray10',fg='white')
+            bathsoaplabel.grid(row=0, column=0, padx=8, pady=6, sticky='w')
+            bathsoapentry = Entry(cosmeticsframe, font=('times new roman', 15, 'bold'), width=10, bd=6)
+            bathsoapentry.grid(row=0, column=1, pady=6, padx=8)
+            bathsoapentry.insert(0, 0)
+
+            facecreamlabel = Label(cosmeticsframe, text='Face Cream', font=('times new roman', 15, 'bold'), bg='gray10',fg='white')
+            facecreamlabel.grid(row=1, column=0, pady=6, padx=8, sticky='w')
+
+            facecreamentry = Entry(cosmeticsframe, font=('times new roman', 15, 'bold'), width=10, bd=6)
+            facecreamentry.grid(row=1, column=1, pady=6, padx=8)
+            facecreamentry.insert(0, 0)
+
+            facewashlabel = Label(cosmeticsframe, text='Face Wash', font=('times new roman', 15, 'bold'),bg='gray10',fg='white')
+            facewashlabel.grid(row=2, column=0, pady=6, padx=8, sticky='w')
+
+            facewashentry = Entry(cosmeticsframe,font=('times new roman', 15, 'bold'),width=10,bd=6)
+            facewashentry.grid(row=2, column=1, pady=6, padx=8, sticky='w')
+            facewashentry.insert(0, 0)
+
+            shampoolabel = Label(cosmeticsframe,text='Shampoo',font=('times new roman', 15, 'bold'),bg='gray10',fg='white')
+            shampoolabel.grid(row=3, column=0, pady=6, padx=8, sticky='w')
+
+            shampooentry = Entry(cosmeticsframe,font=('times new roman', 15, 'bold'),width=10,bd=6)
+            shampooentry.grid(row=3, column=1, pady=6, padx=8, sticky='w')
+            shampooentry.insert(0, 0)
+
+            bodylotionlabel = Label(cosmeticsframe,text='Body Lotion',font=('times new roman', 15, 'bold'),bg='gray10',fg='white')
+            bodylotionlabel.grid(row=4, column=0, pady=6, padx=8, sticky='w')
+
+            bodylotionentry = Entry(cosmeticsframe,font=('times new roman', 15, 'bold'),width=10,bd=6)
+            bodylotionentry.grid(row=4, column=1, pady=6, padx=8, sticky='w')
+            bodylotionentry.insert(0, 0)
+
+            lipbalmlabel = Label(cosmeticsframe,text='Lip Balm',font=('times new roman', 15, 'bold'),bg='gray10',fg='white')
+            lipbalmlabel.grid(row=5, column=0, pady=6, padx=8, sticky='w')
+
+            lipbalmentry = Entry(cosmeticsframe,font=('times new roman', 15, 'bold'),width=10,bd=6)
+            lipbalmentry.grid(row=5, column=1, pady=6, padx=8, sticky='w')
+            lipbalmentry.insert(0, 0)
+
+            groceryframe = LabelFrame(productsframe,text='Grocery',font=('times new roman', 15, 'bold'),bg='gray10',fg='gold', bd=8, relief=RAISED)
+            groceryframe.grid(row=0, column=1, pady=6, sticky='nsew')
+
+            ricelabel = Label( groceryframe, text='Rice', font=('times new roman', 15, 'bold'), bg='gray10', fg='white' )
+            ricelabel.grid(row=0, column=0, pady=6, padx=8, sticky='w')
+
+            riceentry = Entry( groceryframe, font=('times new roman', 15, 'bold'), width=10, bd=6 )
+            riceentry.grid(row=0, column=1, pady=6, padx=8, sticky='w')
+            riceentry.insert(0, 0)
+
+            oliveoillabel = Label( groceryframe, text='Olive Oil', font=('times new roman', 15, 'bold'), bg='gray10', fg='white' )
+            oliveoillabel.grid(row=1, column=0, pady=6, padx=8, sticky='w')
+
+            oliveoilentry = Entry( groceryframe,font=('times new roman', 15, 'bold'),width=10,bd=6)
+            oliveoilentry.grid(row=1, column=1, pady=6, padx=8, sticky='w')
+            oliveoilentry.insert(0, 0)
+
+            oatslabel = Label(groceryframe,text='Oats',font=('times new roman', 15, 'bold'),bg='gray10',fg='white')
+            oatslabel.grid(row=2, column=0, pady=6, padx=8, sticky='w')
+
+            oatsentry = Entry( groceryframe, font=('times new roman', 15, 'bold'), width=10, bd=6 )
+            oatsentry.grid(row=2, column=1, pady=6, padx=8, sticky='w')
+            oatsentry.insert(0, 0)
+
+            wheatlabel = Label( groceryframe, text='Wheat', font=('times new roman', 15, 'bold'), bg='gray10', fg='white' )
+            wheatlabel.grid(row=3, column=0, pady=6, padx=8, sticky='w')
+
+            wheatentry = Entry( groceryframe, font=('times new roman', 15, 'bold'), width=10, bd=6)
+            wheatentry.grid(row=3, column=1, pady=6, padx=8, sticky='w')
+            wheatentry.insert(0, 0)
+
+            gheelabel = Label( groceryframe, text='Ghee', font=('times new roman', 15, 'bold'), bg='gray10', fg='white')
+            gheelabel.grid(row=4, column=0, pady=6, padx=8, sticky='w')
+
+            gheeentry = Entry(groceryframe,font=('times new roman', 15, 'bold'),width=10,bd=6)
+            gheeentry.grid(row=4, column=1, pady=6, padx=8, sticky='w')
+            gheeentry.insert(0, 0)
+
+            sugarlabel = Label(groceryframe,text='Sugar',font=('times new roman', 15, 'bold'),bg='gray10',fg='white')
+            sugarlabel.grid(row=5, column=0, pady=6, padx=8, sticky='w')
+
+            sugarentry = Entry(groceryframe,font=('times new roman', 15, 'bold'),width=10,bd=6)
+            sugarentry.grid(row=5, column=1, pady=6, padx=8, sticky='w')
+            sugarentry.insert(0, 0)
+
+            beveragesframe = LabelFrame(productsframe,text='Beverages',font=('times new roman', 15, 'bold'),bg='gray10',fg='gold',bd=8,relief=RAISED)
+            beveragesframe.grid(row=0, column=2, pady=6, sticky='nsew')
+
+            cocacolalabel = Label(beveragesframe,text='Coca Cola',font=('times new roman', 15, 'bold'),bg='gray10',fg='white')
+            cocacolalabel.grid(row=0, column=0, pady=6, padx=8, sticky='w')
+
+            cocacolaentry = Entry(beveragesframe,font=('times new roman', 15, 'bold'),width=10,bd=6)
+            cocacolaentry.grid(row=0, column=1, pady=6, padx=8, sticky='w')
+            cocacolaentry.insert(0, 0)
+
+            limcalabel = Label(beveragesframe,text='Limca',font=('times new roman', 15, 'bold'),bg='gray10',fg='white')
+            limcalabel.grid(row=1, column=0, pady=6, padx=8, sticky='w')
+
+            limcaentry = Entry(beveragesframe,font=('times new roman', 15, 'bold'),width=10,bd=6)
+            limcaentry.grid(row=1, column=1, pady=6, padx=8, sticky='w')
+            limcaentry.insert(0, 0)
+
+            pepsilabel = Label(beveragesframe,text='Pepsi',font=('times new roman', 15, 'bold'),bg='gray10',fg='white')
+            pepsilabel.grid(row=2, column=0, pady=6, padx=8, sticky='w')
+
+            pepsientry = Entry(beveragesframe,font=('times new roman', 15, 'bold'),width=10,bd=6)
+            pepsientry.grid(row=2, column=1, pady=6, padx=8, sticky='w')
+            pepsientry.insert(0, 0)
+
+            mountaindewlabel = Label(beveragesframe,text='Mountain Dew',font=('times new roman', 15, 'bold'),bg='gray10',fg='white')
+            mountaindewlabel.grid(row=3, column=0, pady=6, padx=8, sticky='w')
+
+            mountaindewentry = Entry(beveragesframe,font=('times new roman', 15, 'bold'),width=10,bd=6)
+            mountaindewentry.grid(row=3, column=1, pady=6, padx=8, sticky='w')
+            mountaindewentry.insert(0, 0)
+
+            monsterlabel = Label(beveragesframe,text='Monster Energy',font=('times new roman', 15, 'bold'),bg='gray10',fg='white')
+            monsterlabel.grid(row=4, column=0, pady=6, padx=8, sticky='w')
+
+            monsterentry = Entry(beveragesframe,font=('times new roman', 15, 'bold'),width=10,bd=6)
+            monsterentry.grid(row=4, column=1, pady=6, padx=8, sticky='w')
+            monsterentry.insert(0, 0)
+
+            redbulllabel = Label(beveragesframe,text='Red Bull',font=('times new roman', 15, 'bold'),bg='gray10',fg='white')
+            redbulllabel.grid(row=5, column=0, pady=6, padx=8, sticky='w')
+
+            redbullentry = Entry(beveragesframe,font=('times new roman', 15, 'bold'),width=10,bd=6)
+            redbullentry.grid(row=5, column=1, pady=6, padx=8, sticky='w')
+            redbullentry.insert(0, 0)
+
+            # Make the right-side bill frame occupy remaining space
+            productsframe.grid_columnconfigure(3, weight=1)
+            productsframe.grid_rowconfigure(0, weight=1)
+            billframe = Frame(productsframe, bd=8, relief=RAISED)
+            billframe.grid(row=0, column=3, sticky='nsew')
+
+            billarealabel = Label(billframe,text='Billing Area',font=('times new roman', 15, 'bold'),bd=8,relief=RAISED)
+            billarealabel.pack(fill=X)
+            scrollbar = Scrollbar(billframe, orient=VERTICAL)
+            scrollbar.pack(side=RIGHT, fill=Y)
+            textarea = Text(billframe, yscrollcommand=scrollbar.set)
+            textarea.pack(fill=BOTH, expand=1)
+            scrollbar.config(command=textarea.yview)
+
+            billmenuframe = LabelFrame(root,text='Bill Menu',font=('times new roman', 15, 'bold'),bg='gray10',fg='gold',bd=8,relief=RAISED)
+            billmenuframe.pack(fill=X, pady=10)
+
+            cosmeticpricelabel = Label(billmenuframe,text='Cosmetic Price',font=('times new roman', 15, 'bold'),bg='gray10',fg='white')
+            cosmeticpricelabel.grid(row=0, column=0, pady=6, padx=8, sticky='w')
+            cosmeticpriceentry = Entry(billmenuframe,font=('times new roman', 15, 'bold'),width=10,bd=6)
+            cosmeticpriceentry.grid(row=0, column=1, pady=6, padx=8, sticky='w')
+
+            grocerypricelabel = Label(billmenuframe,text='Grocery Price',font=('times new roman', 15, 'bold'),bg='gray10',fg='white')
+            grocerypricelabel.grid(row=1, column=0, pady=6, padx=8, sticky='w')
+            grocerypriceentry = Entry(billmenuframe,font=('times new roman', 15, 'bold'),width=10,bd=6)
+            grocerypriceentry.grid(row=1, column=1, pady=6, padx=8, sticky='w')
+
+            beveragespricelabel = Label(billmenuframe,text='Cosmetic Price',font=('times new roman', 15, 'bold'),bg='gray10',fg='white')
+            beveragespricelabel.grid(row=2, column=0, pady=6, padx=8, sticky='w')
+            beveragespriceentry = Entry(billmenuframe,font=('times new roman', 15, 'bold'),width=10,bd=6)
+            beveragespriceentry.grid(row=2, column=1, pady=6, padx=8, sticky='w')
+
+            cosmetictaxlabel = Label(billmenuframe,text='Cosmetic Tax',font=('times new roman', 15, 'bold'),bg='gray10',fg='white')
+            cosmetictaxlabel.grid(row=0, column=2, pady=6, padx=8, sticky='w')
+            cosmetictaxentry = Entry(billmenuframe,font=('times new roman', 15, 'bold'),width=10,bd=6)
+            cosmetictaxentry.grid(row=0, column=3, pady=6, padx=8, sticky='w')
+
+            grocerytaxlabel = Label(billmenuframe,text='Grocery Tax',font=('times new roman', 15, 'bold'),bg='gray10',fg='white')
+            grocerytaxlabel.grid(row=1, column=2, pady=6, padx=8, sticky='w')
+            grocerytaxentry = Entry(billmenuframe,font=('times new roman', 15, 'bold'),width=10,bd=6)
+            grocerytaxentry.grid(row=1, column=3, pady=6, padx=8, sticky='w')
+
+            beveragestaxlabel = Label(billmenuframe,text='Beverages Tax',font=('times new roman', 15, 'bold'),bg='gray10',fg='white')
+            beveragestaxlabel.grid(row=2, column=2, pady=6, padx=8, sticky='w')
+            beveragestaxentry = Entry(billmenuframe,font=('times new roman', 15, 'bold'),width=10,bd=6)
+            beveragestaxentry.grid(row=2, column=3, pady=6, padx=8, sticky='w')
+
+            buttonframe = Frame(billmenuframe, bd=8, relief=RAISED)
+            buttonframe.grid(row=0, column=4, rowspan=3)
+
+            # sign_out moved to headerframe for global use
+
+            totalbutton = Button(buttonframe,text='Total',font=('times new roman', 15, 'bold'),bg='gray10',fg='white',bd=8,width=8,pady=8,command=total)
+            totalbutton.grid(row=0, column=0, pady=20, padx=5)
+
+            billbutton = Button(buttonframe,text='Bill',font=('times new roman', 15, 'bold'),bg='gray10',fg='white',bd=8,width=8,pady=8,command=billarea)
+            billbutton.grid(row=0, column=1, pady=20, padx=5)
+
+            emailbutton = Button(buttonframe,text='E-Mail',font=('times new roman', 15, 'bold'),bg='gray10',fg='white',bd=8,width=8,pady=8,command=sendemail)
+            emailbutton.grid(row=0, column=2, pady=20, padx=5)
+
+            printbutton = Button(buttonframe,text='Print',font=('times new roman', 15, 'bold'),bg='gray10',fg='white',bd=8,width=8,pady=8,command=printbill)
+            printbutton.grid(row=0, column=3, pady=20, padx=5)
+
+            clearbutton = Button(buttonframe,text='Clear',font=('times new roman', 15, 'bold'),bg='gray10',fg='white',bd=8,width=8,pady=8,command=clear)
+            clearbutton.grid(row=0, column=4, pady=20, padx=5)
+
+            def open_bills_folder():
+                bills_dir = os.path.abspath('bills')
+                try:
+                    os.makedirs(bills_dir, exist_ok=True)
+                except Exception:
+                    pass
+                try:
+                    if sys.platform.startswith('win'):
+                        os.startfile(bills_dir)
+                    elif sys.platform == 'darwin':
+                        import subprocess
+                        subprocess.run(['open', bills_dir], check=True)
+                    else:
+                        import subprocess
+                        subprocess.run(['xdg-open', bills_dir], check=True)
+                except Exception as e:
+                    messagebox.showerror('Open Folder', f'Could not open bills folder: {e}')
+
+            filesbutton = Button(buttonframe, text='Files', font=('times new roman', 15, 'bold'), bg='gray10', fg='white', bd=8, width=8, pady=8, command=open_bills_folder)
+            filesbutton.grid(row=0, column=5, pady=20, padx=5)
+            root.mainloop()
+
+        else:
+            attempts_state['count'] += 1
+            remaining = 3 - attempts_state['count']
+            if remaining <= 0:
+                messagebox.showerror('Login Failed', 'Too many failed attempts. Exiting.')
+                auth.destroy()
+            else:
+                messagebox.showerror('Login Failed', f'Wrong username or password. Attempts left: {remaining}')
+                passwordentry.delete(0, END)
+                passwordentry.focus_set()
+            
+    Login = Button(auth, text='LOGIN', font=('times new roman', 15, 'bold'), bg="gray10", fg="white", bd=6,command=sysAuth)
+    Login.pack(padx=20, pady=10)
+    auth.bind('<Return>', lambda e: sysAuth())
+    passwordentry.bind('<Return>', lambda e: sysAuth())
+    auth.mainloop()
+
+
